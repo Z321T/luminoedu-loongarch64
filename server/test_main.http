@@ -1,0 +1,88 @@
+# Test FastAPI endpoints
+
+# 学生登录
+POST http://127.0.0.1:8000/auth/login
+Content-Type: application/json
+
+{
+  "user_id": "S2025001",
+  "password": "mmmm123"
+}
+
+> {%
+client.global.set("student_token", response.body.access_token);
+%}
+
+###
+
+### 教师登录
+POST http://127.0.0.1:8000/auth/login
+Content-Type: application/json
+
+{
+  "user_id": "T2025001",
+  "password": "mmmm123"
+}
+
+> {%
+client.global.set("teacher_token", response.body.access_token);
+%}
+
+###
+
+### 管理员登录
+POST http://127.0.0.1:8000/auth/login
+Content-Type: application/json
+
+{
+  "user_id": "A2025001",
+  "password": "mmmm123"
+}
+
+> {%
+client.global.set("admin_token", response.body.access_token);
+%}
+
+###
+
+# 用学生token访问
+GET http://127.0.0.1:8000/user/profile
+Authorization: Bearer {{student_token}}
+Accept: application/json
+
+###
+
+# 用教师token访问
+GET http://127.0.0.1:8000/user/profile
+Authorization: Bearer {{teacher_token}}
+Accept: application/json
+
+###
+
+# 用管理员token访问
+GET http://127.0.0.1:8000/admin/user_management/list_students
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+###
+
+# 管理员获取日志服务列表（log_management_rt.py）
+GET http://127.0.0.1:8000/admin/log_management/services
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+###
+
+# 管理员下载嵌入模型（model_management_rt.py）
+POST http://127.0.0.1:8000/admin/model_management/download_model
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+###
+
+# 管理员获取学生列表（user_management_rt.py）
+GET http://127.0.0.1:8000/admin/user_management/list_students?page=1&page_size=10
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+###

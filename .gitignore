@@ -1,0 +1,106 @@
+### 通用系统文件 ###
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.fuse_hidden*
+.nfs*
+*.swp
+*.swo
+*.bak
+
+
+### 前端 (Vue) 需要忽略的文件 ###
+frontend/node_modules/
+frontend/frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.vscode/
+frontend/.idea/
+
+
+### 后端 (FastAPI) 需要忽略的文件 ###
+# Python 虚拟环境
+server/venv/
+
+# Python 编译文件
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# 开发/测试生成文件
+server/.env
+server/.env.local
+server/*.log
+server/coverage.xml
+server/htmlcov/
+
+# 数据库文件（如 SQLite）
+*.db
+*.sqlite3
+
+# 单元测试缓存
+server/.pytest_cache/
+
+### Aerich 生成的配置文件 ###
+server/pyproject.toml
+
+### Aerich 迁移文件 ###
+server/migrations/*
+# 保留 migrations 文件夹本身
+!server/migrations/
+!server/migrations/.gitkeep
+
+# documents文件夹
+server/documents/*
+# 保留 documents 文件夹本身
+!server/documents/
+!server/documents/.gitkeep
+
+# logs文件夹
+server/app/logs/*
+# 保留 logs 文件夹本身
+!server/app/logs/
+!server/app/logs/.gitkeep
+
+# 安全相关
+server/.secret_key
+
+### IDE/编辑器配置 ###
+# VS Code
+.vscode/
+!.vscode/settings.json.example  # 可提交示例配置（如果需要）
+
+# PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
+
+### 其他通用忽略 ###
+# 本地环境变量文件
+*.env
+*.env.local
+*.env.*.local
+
+# 调试文件
+debug.log
+
+# 构建输出目录
+server/build/
+
+/server/app/documents
