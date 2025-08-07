@@ -11,7 +11,7 @@
     <!-- 主要内容区域 -->
     <div class="main">
       <!-- 顶部栏 -->
-      <PageHeader title="教学PPT生成助手">
+      <PageHeader title="PPT生成">
         <template #actions>
           <div class="header-user">
             <span>欢迎，{{ username }}</span>
@@ -110,7 +110,7 @@
                       id="subject"
                       v-model="formData.subject"
                       class="form-control"
-                      placeholder="请输入学科名称，如数学、语文等"
+                      placeholder="请输入学科名称，如计算机科学与技术、软件工程等"
                       maxlength="30"
                       :disabled="isLoading"
                     />
@@ -124,7 +124,7 @@
                       id="target_grade"
                       v-model="formData.target_grade"
                       class="form-control"
-                      placeholder="如：初一、高二等"
+                      placeholder="如：大一、大二等"
                       :disabled="isLoading"
                     />
                   </div>
@@ -156,7 +156,7 @@
                     id="teaching_target"
                     v-model="formData.teaching_target"
                     class="form-control textarea"
-                    placeholder="描述这节课的教学目标，不超过100个字符"
+                    placeholder="描述教学目标，不超过100个字符"
                     rows="3"
                     maxlength="100"
                     :disabled="isLoading"
@@ -314,7 +314,7 @@
                     PPT预览
                   </h2>
                   <p class="card-description">
-                    生成的PPT幻灯片，可以下载为PPTX文件
+                    生成的PPT幻灯片页内容
                   </p>
                 </div>
               </div>
@@ -384,7 +384,7 @@
                     自定义大纲
                   </h2>
                   <p class="card-description">
-                    上传您自己的Markdown格式大纲文件，直接生成PPT
+                    上传自定义的Markdown格式大纲文件，直接生成PPT
                   </p>
                 </div>
               </div>
@@ -407,32 +407,36 @@
 
                     <div class="file-upload-container">
                       <label
-                        for="outline-file"
-                        class="file-upload-label"
+                          for="outline-file"
+                          class="file-upload-label"
+                          :class="{
+                            'has-file': outlineFile,
+                            'disabled': isUploadingOutline
+                          }"
                       >
                         <i class="icon-upload"></i>
-                        <span>{{ outlineFile ? outlineFile.name : '选择Markdown大纲文件' }}</span>
+                        <span>{{ outlineFile ? outlineFile.name : '点击选择Markdown大纲文件' }}</span>
                       </label>
                       <input
-                        type="file"
-                        id="outline-file"
-                        accept=".md,.markdown,text/markdown"
-                        @change="handleFileChange"
-                        class="file-input"
-                        :disabled="isUploadingOutline"
+                          type="file"
+                          id="outline-file"
+                          accept=".md,.markdown,text/markdown"
+                          @change="handleFileChange"
+                          class="file-input"
+                          :disabled="isUploadingOutline"
                       />
                       <button
-                        @click="uploadOutlineFile"
-                        class="primary-btn"
-                        :disabled="!isUploadReady || isUploadingOutline"
+                          @click="uploadOutlineFile"
+                          class="primary-btn"
+                          :disabled="!isUploadReady || isUploadingOutline"
                       >
-                        <span
+                      <span
                           v-if="isUploadingOutline"
                           class="loading-spinner-small"
-                        ></span>
+                      ></span>
                         <i
-                          v-else
-                          class="icon-upload"
+                            v-else
+                            class="icon-upload"
                         ></i>
                         {{ isUploadingOutline ? '上传中...' : '上传并生成PPT' }}
                       </button>
@@ -476,7 +480,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { generatePPTOutline, generatePPTFromOutline, downloadPPTX } from '@/api/teacher/PPT_generate';
+import { generatePPTOutline, generatePPTFromOutline, downloadPPTXfile } from '@/api/teacher/PPT_generate';
 import { marked } from 'marked';
 import PageHeader from '@/components/layout/PageHeader.vue';
 import SideBar from '@/components/layout/SideBar.vue';
@@ -693,15 +697,44 @@ const generatePPT = async () => {
   }
 };
 
-// 下载PPT
+// 下载PPT函数
 const downloadPPT = async () => {
   if (!pptResult.value) return;
+
+  const token = localStorage.getItem('token');
+  if (!token) {
+    errorMessage.value = '认证信息已过期，请重新登录';
+    setTimeout(() => {
+      router.push('/login');
+    }, 2000);
+    return;
+  }
+
+  isDownloadingPPT.value = true;
+
   try {
-    const filename = pptResult.value.filename || '未命名演示文稿';
-    await downloadPPTX(pptResult.value, filename);
+    // 使用完整的文件名，如果没有则使用title
+    const filename = pptResult.value.filename || pptResult.value.title || '未命名演示文稿';
+
+    // 确保文件名包含.pptx扩展名
+    const fullFilename = filename.endsWith('.pptx') ? filename : `${filename}.pptx`;
+
+    // 使用与文件列表相同的下载函数
+    await downloadPPTXfile(fullFilename);
     showQuickTipMessage('PPT下载成功！');
   } catch (error) {
-    errorMessage.value = error.message;
+    console.error('下载PPT失败:', error);
+
+    if (error.message.includes('认证失败')) {
+      errorMessage.value = '认证信息已过期，请重新登录';
+      setTimeout(() => {
+        router.push('/login');
+      }, 2000);
+    } else {
+      errorMessage.value = error.message || '下载PPT失败，请稍后重试';
+    }
+  } finally {
+    isDownloadingPPT.value = false;
   }
 };
 
@@ -970,10 +1003,6 @@ onMounted(() => {
   margin: 0 0 10px 0;
   font-size: 24px;
   font-weight: 600;
-}
-
-.title-icon {
-  font-size: 28px;
 }
 
 .card-description {
@@ -1377,6 +1406,75 @@ label {
   font-size: 18px;
 }
 
+/* 文件上传容器样式 */
+.file-upload-container {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+/* 隐藏原生文件输入 */
+.file-input {
+  display: none;
+}
+
+/* 自定义文件选择标签 */
+.file-upload-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f7fafc;
+  border: 2px dashed #cbd5e0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+  color: #4a5568;
+  min-height: 48px;
+}
+
+.file-upload-label:hover {
+  background: #edf2f7;
+  border-color: #667eea;
+  color: #667eea;
+}
+
+.file-upload-label.has-file {
+  background: #e6fffa;
+  border-color: #4fd1c5;
+  color: #2d3748;
+}
+
+.file-upload-label.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.file-upload-label .icon-upload:before {
+  content: '📁';
+  font-size: 18px;
+}
+
+.file-upload-label span {
+  flex: 1;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 上传按钮样式调整 */
+.file-upload-container .primary-btn {
+  flex-shrink: 0;
+  min-width: 150px;
+  justify-content: center;
+}
+
+.icon-upload:before {
+  content: '⬆️';
+}
+
 
 @media (max-width: 768px) {
 
@@ -1441,14 +1539,6 @@ label {
 
 .icon-generate:before {
   content: '✨';
-}
-
-.icon-copy:before {
-  content: '📋';
-}
-
-.icon-download:before {
-  content: '📥';
 }
 
 .icon-error:before {

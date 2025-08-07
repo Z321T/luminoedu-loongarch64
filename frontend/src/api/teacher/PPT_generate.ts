@@ -1,34 +1,6 @@
-import axios from 'axios'
+import api from '../../utils/http'
 
-// 创建 axios 实例
-const api = axios.create({
-  baseURL: 'http://localhost:8000',
-  timeout: 60000,
-})
 
-// 请求拦截器 - 添加认证信息
-api.interceptors.request.use(
-    (config) => {
-      const token = localStorage.getItem('token')
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`
-      }
-      return config
-    },
-    (error) => Promise.reject(error)
-)
-
-// 响应拦截器 - 处理认证错误
-api.interceptors.response.use(
-    (response) => response,
-    (error) => {
-      if (error.response?.status === 401) {
-        localStorage.removeItem('token')
-        window.location.href = '/login'
-      }
-      return Promise.reject(error)
-    }
-)
 
 // PPT生成请求接口
 export interface PPTGenerateRequest {
@@ -187,38 +159,6 @@ export const generatePPTFromOutline = async (title: string, file: File): Promise
   }
 };
 
-/**
- * 从生成的PPT数据下载PPTX文件
- * @param pptData PPT数据
- * @param filename 文件名
- */
-export const downloadPPTX = async (filename: string): Promise<void> => {
-  try {
-    console.log('开始下载PPTX文件:', filename);
-
-    const response = await api.get(`/teacher/ppt/download_ppt/${filename}`, {
-      responseType: 'blob'
-    });
-
-    const blob = new Blob([response.data], {
-      type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-    });
-
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${filename}.pptx`;
-
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(link.href);
-
-    console.log('PPTX文件下载成功');
-  } catch (error: any) {
-    console.error('下载PPTX文件失败:', error);
-    throw new Error('下载PPTX文件失败，请稍后重试');
-  }
-};
 
 
 /**
@@ -348,7 +288,7 @@ export interface PPTFileListResponse {
   files: PPTFile[];
 }
 
-// 修改 getPPTFileList 函数指定返回类型
+// 获取PPT文件列表
 export const getPPTFileList = async (): Promise<PPTFileListResponse> => {
   try {
     const response = await api.get('/teacher/ppt/list_ppt');
@@ -360,7 +300,7 @@ export const getPPTFileList = async (): Promise<PPTFileListResponse> => {
   }
 };
 
-
+// 下载PPTX文件
 export const downloadPPTXfile = async (filename: string): Promise<void> => {
   try {
     console.log('开始下载PPTX文件:', filename);

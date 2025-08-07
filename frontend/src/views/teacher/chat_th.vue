@@ -366,7 +366,10 @@ onUnmounted(() => {
 .welcome-icon { font-size: 48px; margin-bottom: 16px; }
 .welcome-message h2 { color: #2d3748; }
 .message-wrapper { display: flex; max-width: 80%; }
-
+/* 用户消息靠右对齐 */
+.message-wrapper.user { justify-content: flex-end; margin-left: auto; }
+/* AI消息靠左对齐 */
+.message-wrapper.assistant { justify-content: flex-start; margin-right: auto; }
 .message-bubble { padding: 12px 16px; border-radius: 18px; line-height: 1.6; position: relative; }
 .message-wrapper.user .message-bubble { background-color: #3182ce; color: white; border-bottom-right-radius: 4px; }
 .message-wrapper.assistant .message-bubble { background-color: #edf2f7; color: #2d3748; border-bottom-left-radius: 4px; }
