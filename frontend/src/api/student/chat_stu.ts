@@ -1,17 +1,29 @@
 import api from '../../utils/http'
 
-
-
 // 定义消息类型
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system'
-  content: string
+    role: 'user' | 'assistant' | 'system'
+    content: string
+}
+
+// 定义AI模型枚举
+export enum AIModel {
+    DEEPSEEK = 'deepseek',
+    KIMI = 'kimi'
+}
+
+// 定义模型信息
+export interface ModelInfo {
+    id: string
+    name: string
+    description: string
 }
 
 // 定义发送消息的请求体
 export interface ChatRequest {
     messages: ChatMessage[]
     chat_id?: string | null
+    model: AIModel  // 添加模型字段
     max_tokens?: number
     temperature?: number
     stream?: boolean
@@ -19,21 +31,32 @@ export interface ChatRequest {
 
 // 定义历史聊天记录预览
 export interface ChatHistoryPreview {
-  chat_id: string
-  created_at: string
-  preview: string
+    chat_id: string
+    created_at: string
+    preview: string
+    model?: string  // 添加模型字段
+    message_count?: number
+    last_updated?: string
 }
 
 // 定义单个聊天会话的完整历史
 export interface ChatSession {
-  messages: ChatMessage[]
-  created_at: string
+    messages: ChatMessage[]
+    created_at: string
 }
 
-/**
- * 获取聊天历史记录列表
- * @param limit 返回的记录数量
- */
+// 获取可用模型列表
+export const getAvailableModels = async (): Promise<{ models: ModelInfo[], default: string }> => {
+    try {
+        const response = await api.get('/chat/models')
+        return response.data
+    } catch (error) {
+        console.error('获取模型列表失败:', error)
+        throw error
+    }
+}
+
+// 获取聊天历史记录列表
 export const getChatHistoryList = async (limit: number = 50): Promise<{ chats: ChatHistoryPreview[] }> => {
     const response = await api.get('/chat/history', {
         params: { limit }
@@ -41,10 +64,7 @@ export const getChatHistoryList = async (limit: number = 50): Promise<{ chats: C
     return response.data
 }
 
-/**
- * 获取指定 chat_id 的完整聊天内容
- * @param chatId 聊天会话ID
- */
+// 获取指定聊天会话的完整内容
 export const getChatSession = async (chatId: string): Promise<ChatSession> => {
     const response = await api.get('/chat/history', {
         params: { chat_id: chatId }
@@ -52,11 +72,7 @@ export const getChatSession = async (chatId: string): Promise<ChatSession> => {
     return response.data
 }
 
-
-/**
- * 发送聊天消息（用于流式获取响应）
- * @param data 请求体
- */
+// 流式聊天函数
 export const streamChat = async (
     data: ChatRequest,
     onChunk: (content: string, chatId?: string) => void,
@@ -73,7 +89,7 @@ export const streamChat = async (
             const requestData = {
                 ...data,
                 max_tokens: data.max_tokens || 4096, // 增加 token 限制
-                temperature: data.temperature || 0.7,
+                temperature: data.temperature || 0.6,
                 stream: true
             }
 

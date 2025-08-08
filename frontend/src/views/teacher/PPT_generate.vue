@@ -658,40 +658,85 @@ const downloadOutline = async () => {
   if (!outlineResult.value) return;
 
   try {
+    // 添加详细的调试信息
+    console.log('完整的outlineResult数据结构:', JSON.stringify(outlineResult.value, null, 2));
 
-    // 正确访问文件名 - 从 outlines 数组中获取
-    const fileName = outlineResult.value.outlines?.[0]?.filename ||
-        outlineResult.value.filename ||
-        `${outlineResult.value.title || '未命名'}_大纲.md`;
+    let fileName = null;
 
-    if (!fileName || fileName === 'undefined') {
-      throw new Error('文件名不存在，无法下载');
+    // 检查各种可能的数据结构
+    if (outlineResult.value.outlines && Array.isArray(outlineResult.value.outlines) && outlineResult.value.outlines.length > 0) {
+      // 数据在 outlines 数组中
+      fileName = outlineResult.value.outlines[0].filename;
+      console.log('从outlines数组获取文件名:', fileName);
+    } else if (outlineResult.value.filename) {
+      // 数据直接在根级别
+      fileName = outlineResult.value.filename;
+      console.log('从根级别获取文件名:', fileName);
+    } else {
+      console.log('无法从后端数据获取文件名，尝试生成文件名');
+
+      // 如果后端没有返回文件名，使用前端直接下载
+      const content = outlineResult.value.outline_md;
+      const generatedFileName = `${outlineResult.value.title || '大纲'}.md`;
+
+      if (content) {
+        // 前端直接创建文件下载
+        const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = generatedFileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+        showQuickTipMessage('大纲文件下载成功');
+        return;
+      } else {
+        throw new Error('无法获取大纲内容');
+      }
     }
 
-    console.log('下载大纲文件名:', fileName);
+    // 验证文件名
+    if (!fileName || fileName === 'undefined' || fileName === 'null') {
+      throw new Error('无法获取有效的文件名，请重新生成大纲');
+    }
 
-    // 使用统一的下载函数
+    console.log('准备下载的文件名:', fileName);
+
+    // 使用后端下载API
     await downloadPPTOutlineFile(fileName);
-    alert('大纲文件下载已开始')
+    showQuickTipMessage('大纲文件下载成功');
+
   } catch (error) {
-    alert(error.message || '下载失败')
+    console.error('下载大纲文件失败:', error);
+
+    // 如果后端下载失败，尝试前端直接下载作为备选方案
+    if (outlineResult.value.outline_md) {
+      try {
+        console.log('后端下载失败，尝试前端直接下载');
+        const content = outlineResult.value.outline_md;
+        const fallbackFileName = `${outlineResult.value.title || '大纲'}_${new Date().getTime()}.md`;
+
+        const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = fallbackFileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+        showQuickTipMessage('大纲文件下载成功（备选方案）');
+        return;
+      } catch (fallbackError) {
+        console.error('备选下载方案也失败:', fallbackError);
+      }
+    }
+
+    errorMessage.value = error.message || '下载失败，请稍后重试';
   }
 };
-// const downloadOutline = () => {
-//   if (!outlineResult.value) return;
-//   try {
-//     const fileName = outlineResult.value.filename
-//     const blob = new Blob([outlineResult.value.outline_md], { type: 'text/markdown;charset=utf-8' });
-//     const link = document.createElement('a');
-//     link.href = URL.createObjectURL(blob);
-//     link.download = fileName;
-//     link.click();
-//     URL.revokeObjectURL(link.href);
-//     showQuickTipMessage('Markdown文件下载成功');
-//   } catch (error) {
-//     errorMessage.value = '下载失败，请稍后重试';
-//   }
-// };
 
 // 生成PPT
 const generatePPT = async () => {

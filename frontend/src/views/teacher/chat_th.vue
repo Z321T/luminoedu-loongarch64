@@ -27,7 +27,10 @@
                 :class="{ active: item.chat_id === activeChatId }"
                 @click="loadChatSession(item.chat_id)">
               <div class="history-preview">{{ item.preview }}</div>
-              <div class="history-date">{{ formatDate(item.created_at) }}</div>
+              <div class="history-meta">
+                <span class="history-date">{{ formatDate(item.created_at) }}</span>
+                <span v-if="item.model" class="history-model">{{ getModelDisplayName(item.model) }}</span>
+              </div>
             </li>
           </ul>
         </div>
@@ -36,25 +39,41 @@
             <div v-if="messages.length === 0" class="welcome-message">
               <div class="welcome-icon">🎓</div>
               <h2>欢迎使用 LuminoEdu 教学助手</h2>
-              <div>请在下方输入您的教学问题</div>
+              <div>请选择AI模型并在下方输入您的教学问题</div>
             </div>
             <div v-else>
               <div v-for="(msg, idx) in messages" :key="idx" :class="['message-wrapper', msg.role]">
                 <div class="message-bubble">
                   <div class="message-content">{{ msg.content }}</div>
-                  <div v-if="msg.role === 'assistant' && isReplying && idx === messages.length - 1" class="typing-cursor">|</div>
                 </div>
               </div>
             </div>
           </div>
           <div class="input-area">
-            <textarea
+            <!-- 模型选择区域 -->
+            <div class="model-selector">
+              <label for="model-select">AI模型:</label>
+              <select
+                id="model-select"
+                v-model="selectedModel"
+                :disabled="isReplying"
+                @change="onModelChange"
+              >
+                <option v-for="model in availableModels" :key="model.id" :value="model.id">
+                  {{ model.name }}
+                </option>
+              </select>
+            </div>
+            <!-- 输入区域 -->
+            <div class="message-input">
+              <textarea
                 v-model="userInput"
                 :disabled="isReplying"
-                placeholder="请输入您的教学问题，按回车发送"
+                placeholder="请输入您的教学问题..."
                 @keydown.enter.prevent="sendMessage"
-            ></textarea>
-            <button :disabled="isReplying || !userInput.trim()" @click="sendMessage">发送</button>
+              ></textarea>
+              <button :disabled="isReplying || !userInput.trim()" @click="sendMessage">发送</button>
+            </div>
             <div v-if="isReplying" class="typing-indicator">
               <span></span><span></span><span></span>
             </div>
@@ -74,8 +93,11 @@ import {
   getChatHistoryList,
   getChatSession,
   streamChat,
+  getAvailableModels,
   type ChatHistoryPreview,
   type ChatMessage,
+  type ModelInfo,
+  AIModel,
 } from '@/api/teacher/chat_th'
 
 const router = useRouter()
@@ -97,6 +119,10 @@ const userInput = ref('')
 const isReplying = ref(false)
 const messagesAreaRef = ref<HTMLElement | null>(null)
 
+// 模型相关状态
+const availableModels = ref<ModelInfo[]>([])
+const selectedModel = ref<AIModel>(AIModel.KIMI)
+
 // 打字效果相关状态
 const typewriterQueue = ref<string[]>([])
 const currentAssistantMessage = ref<ChatMessage | null>(null)
@@ -108,6 +134,36 @@ const scrollToBottom = () => {
       messagesAreaRef.value.scrollTop = messagesAreaRef.value.scrollHeight
     }
   })
+}
+
+// 获取模型显示名称
+const getModelDisplayName = (modelId: string): string => {
+  const model = availableModels.value.find(m => m.id === modelId)
+  return model ? model.name : modelId
+}
+
+// 加载可用模型
+const loadAvailableModels = async () => {
+  try {
+    const res = await getAvailableModels()
+    availableModels.value = res.models
+    selectedModel.value = (res.default as AIModel) || AIModel.KIMI
+    console.log('可用模型:', availableModels.value)
+  } catch (error) {
+    console.error('加载模型列表失败:', error)
+    // 设置默认模型
+    availableModels.value = [
+      { id: AIModel.KIMI, name: 'Kimi', description: 'Kimi 模型' },
+      { id: AIModel.DEEPSEEK, name: 'DeepSeek', description: 'DeepSeek 模型' }
+    ]
+    selectedModel.value = AIModel.KIMI
+  }
+}
+
+// 模型切换处理
+const onModelChange = () => {
+  console.log('切换到模型:', selectedModel.value)
+  // 如果当前有对话，可以考虑提示用户模型切换会影响新消息
 }
 
 // 打字效果函数
@@ -123,7 +179,6 @@ const startTypewriter = () => {
       return
     }
 
-    // 添加安全检查
     if (!currentAssistantMessage.value) {
       console.warn('当前助手消息引用为空，停止打字效果')
       typewriterQueue.value = []
@@ -138,7 +193,6 @@ const startTypewriter = () => {
   }, 30)
 }
 
-// 添加文本到打字队列
 const addToTypewriterQueue = (text: string) => {
   typewriterQueue.value.push(...text.split(''))
   if (!typewriterTimer) {
@@ -146,20 +200,16 @@ const addToTypewriterQueue = (text: string) => {
   }
 }
 
-// 停止打字效果
 const stopTypewriter = () => {
   if (typewriterTimer) {
     clearInterval(typewriterTimer)
     typewriterTimer = null
   }
-  // 立即显示剩余的所有文本
   if (currentAssistantMessage.value && typewriterQueue.value.length > 0) {
     currentAssistantMessage.value.content += typewriterQueue.value.join('')
     typewriterQueue.value = []
     scrollToBottom()
-  }
-  // 如果没有当前消息引用但还有队列，说明可能有问题
-  else if (typewriterQueue.value.length > 0) {
+  } else if (typewriterQueue.value.length > 0) {
     console.warn('打字队列中还有内容，但没有当前消息引用')
     typewriterQueue.value = []
   }
@@ -176,7 +226,6 @@ const loadHistory = async () => {
       chatHistory.value = res.chats
       console.log(`成功加载 ${res.chats.length} 条历史记录:`, res.chats)
     } else if (res && res.chats) {
-      // 如果chats不是数组，尝试转换
       chatHistory.value = []
       console.warn('历史记录格式异常:', res)
     } else {
@@ -187,16 +236,15 @@ const loadHistory = async () => {
     console.error('加载聊天历史失败:', error)
     chatHistory.value = []
 
-    // 更详细的错误提示
     if (error instanceof Error) {
       console.error('错误详情:', error.message)
       if (error.message.includes('401')) {
         alert('登录已过期，请重新登录')
-        handleLogout()
+        router.push('/login')
       } else if (error.message.includes('404')) {
-        console.log('暂无历史记录')
+        console.log('用户暂无聊天历史')
       } else {
-        console.error(`加载聊天历史失败: ${error.message}`)
+        alert('加载聊天历史失败，请刷新页面重试')
       }
     } else {
       console.error('未知错误:', error)
@@ -209,7 +257,6 @@ const loadHistory = async () => {
 const loadChatSession = async (chatId: string) => {
   if (isReplying.value) return
 
-  // 停止当前的打字效果
   stopTypewriter()
 
   activeChatId.value = chatId
@@ -226,7 +273,6 @@ const loadChatSession = async (chatId: string) => {
 const startNewChat = () => {
   if (isReplying.value) return
 
-  // 停止当前的打字效果
   stopTypewriter()
 
   activeChatId.value = null
@@ -255,17 +301,16 @@ const sendMessage = async () => {
         {
           messages: messages.value.slice(0, -1),
           chat_id: activeChatId.value,
+          model: selectedModel.value, // 添加缺失的 model 字段
           max_tokens: 4096,
           temperature: 0.7,
           stream: true,
         },
         (chunk, chatId) => {
-          // 将接收到的文本块添加到打字队列
           if (chunk) {
             addToTypewriterQueue(chunk)
           }
 
-          // 如果是新对话且收到了 chat_id，则更新状态并刷新历史列表
           if (isNewChat && chatId && !activeChatId.value) {
             activeChatId.value = chatId
             isNewChat = false
@@ -274,7 +319,6 @@ const sendMessage = async () => {
         }
     )
   } catch (error) {
-    // 停止打字效果并显示错误
     stopTypewriter()
     const errorMessage = error instanceof Error ? error.message : String(error)
     assistantMessage.content = `抱歉，出错了: ${errorMessage}`
@@ -282,7 +326,6 @@ const sendMessage = async () => {
   } finally {
     isReplying.value = false
 
-    // 等待打字效果完成后再清空引用
     const waitForTypewriterComplete = () => {
       if (typewriterQueue.value.length > 0 || typewriterTimer !== null) {
         setTimeout(waitForTypewriterComplete, 50)
@@ -291,7 +334,6 @@ const sendMessage = async () => {
       }
     }
 
-    // 确保所有文本都已显示
     setTimeout(() => {
       stopTypewriter()
       waitForTypewriterComplete()
@@ -322,7 +364,6 @@ const handleMenuClick = (item: any) => {
 
 const handleLogout = () => {
   if (confirm('确定要退出登录吗？')) {
-    // 停止打字效果
     stopTypewriter()
     localStorage.removeItem('token')
     localStorage.removeItem('username')
@@ -331,10 +372,10 @@ const handleLogout = () => {
 }
 
 onMounted(() => {
+  loadAvailableModels()
   loadHistory()
 })
 
-// 组件卸载时清理定时器
 onUnmounted(() => {
   stopTypewriter()
 })
@@ -358,7 +399,9 @@ onUnmounted(() => {
 .history-list li:hover { background-color: #f7fafc; }
 .history-list li.active { background-color: #ebf8ff; border-left: 3px solid #3182ce; }
 .history-preview { margin: 0 0 4px; color: #4a5568; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-meta { display: flex; justify-content: space-between; align-items: center; }
 .history-date { font-size: 12px; color: #a0aec0; }
+.history-model { font-size: 11px; background: #e2e8f0; color: #4a5568; padding: 2px 6px; border-radius: 4px; }
 .history-loading { text-align: center; padding: 20px; color: #718096; }
 .chat-window { flex-grow: 1; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); display: flex; flex-direction: column; overflow: hidden; }
 .messages-area { flex-grow: 1; padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
@@ -366,33 +409,31 @@ onUnmounted(() => {
 .welcome-icon { font-size: 48px; margin-bottom: 16px; }
 .welcome-message h2 { color: #2d3748; }
 .message-wrapper { display: flex; max-width: 80%; }
-/* 用户消息靠右对齐 */
 .message-wrapper.user { justify-content: flex-end; margin-left: auto; }
-/* AI消息靠左对齐 */
 .message-wrapper.assistant { justify-content: flex-start; margin-right: auto; }
 .message-bubble { padding: 12px 16px; border-radius: 18px; line-height: 1.6; position: relative; }
 .message-wrapper.user .message-bubble { background-color: #3182ce; color: white; border-bottom-right-radius: 4px; }
 .message-wrapper.assistant .message-bubble { background-color: #edf2f7; color: #2d3748; border-bottom-left-radius: 4px; }
 .message-content { white-space: pre-wrap; word-break: break-word; }
-.typing-cursor {
-  display: inline-block;
-  animation: blink 1s infinite;
-  color: #3182ce;
-  font-weight: bold;
-  margin-left: 2px;
-}
+
 @keyframes blink {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0; }
 }
-.input-area { padding: 16px 24px; border-top: 1px solid #e2e8f0; display: flex; gap: 12px; background-color: #fdfdfd; }
-.input-area textarea { flex-grow: 1; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; resize: none; font-size: 14px; font-family: inherit; height: 50px; transition: border-color 0.2s; }
-.input-area textarea:focus { outline: none; border-color: #3182ce; }
-.input-area textarea:disabled { background-color: #f7fafc; }
-.input-area button { flex-shrink: 0; padding: 0 24px; border: none; background-color: #3182ce; color: white; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s; }
-.input-area button:hover:not(:disabled) { background-color: #2b6cb0; }
-.input-area button:disabled { background-color: #a0aec0; cursor: not-allowed; }
-.typing-indicator { padding: 10px 0; }
+.input-area { padding: 16px 24px; border-top: 1px solid #e2e8f0; background-color: #fdfdfd; }
+.model-selector { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.model-selector label { font-size: 14px; color: #4a5568; font-weight: 500; min-width: 60px; }
+.model-selector select { padding: 6px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px; background: white; cursor: pointer; transition: border-color 0.2s; }
+.model-selector select:focus { outline: none; border-color: #3182ce; }
+.model-selector select:disabled { background-color: #f7fafc; cursor: not-allowed; }
+.message-input { display: flex; gap: 12px; }
+.message-input textarea { flex-grow: 1; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; resize: none; font-size: 14px; font-family: inherit; height: 50px; transition: border-color 0.2s; }
+.message-input textarea:focus { outline: none; border-color: #3182ce; }
+.message-input textarea:disabled { background-color: #f7fafc; }
+.message-input button { flex-shrink: 0; padding: 0 24px; border: none; background-color: #3182ce; color: white; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s; }
+.message-input button:hover:not(:disabled) { background-color: #2b6cb0; }
+.message-input button:disabled { background-color: #a0aec0; cursor: not-allowed; }
+.typing-indicator { padding: 10px 0; text-align: center; }
 .typing-indicator span { height: 8px; width: 8px; background-color: #a0aec0; border-radius: 50%; display: inline-block; animation: wave 1.3s infinite; margin: 0 2px; }
 .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
 .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }

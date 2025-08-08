@@ -4,13 +4,12 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from pathlib import Path
 
-from openai import OpenAI
-
-from app.config import DEEPSEEK_API_KEY, KIMI_API_KEY, MEDIA_ROOT
+from app.config import MEDIA_ROOT
 from app.core.logger import setup_logger
+from app.core.api_client import MODEL_CONFIGS
 from app.models.user_common import UserRole
 from app.schemas.chat_sch import (
-    ChatMessage, ChatRequest, ChatStreamResponse, ChatMessageRole
+    ChatMessage, ChatRequest, ChatStreamResponse, AIModel
 )
 
 # 设置日志
@@ -20,18 +19,29 @@ logger = setup_logger("chat_service")
 CHAT_HISTORY_ROOT_DIR = MEDIA_ROOT / "chat_history"
 CHAT_HISTORY_ROOT_DIR.mkdir(exist_ok=True, parents=True)
 
-# 创建 API 客户端
-client = OpenAI(
-    api_key=DEEPSEEK_API_KEY,
-    base_url="https://api.deepseek.com"
-)
 
 # 内存缓存聊天历史
 chat_history_cache = {}
 
 
+
+def get_client_and_model(model: AIModel) -> tuple:
+    """
+    根据模型类型获取对应的客户端和模型名称
+    """
+    config = MODEL_CONFIGS.get(model)
+    if not config:
+        logger.warning(f"未知模型类型: {model}, 使用默认 KIMI")
+        config = MODEL_CONFIGS[AIModel.KIMI]
+
+    return config["client"], config["model_name"]
+
+
+
 def get_user_chat_directory(user_id: str, user_role: UserRole) -> Path:
-    """根据用户角色和ID创建用户专属的聊天历史目录"""
+    """
+    根据用户角色和ID创建用户专属的聊天历史目录
+    """
     # 根据角色和用户ID创建目录名：如 student_1, teacher_2, admin_3
     folder_name = f"{user_role.value}_{user_id}"
     user_dir = CHAT_HISTORY_ROOT_DIR / folder_name
@@ -40,7 +50,9 @@ def get_user_chat_directory(user_id: str, user_role: UserRole) -> Path:
 
 
 def get_chat_file_path(user_id: str, user_role: UserRole, chat_id: str) -> Path:
-    """获取指定用户角色、用户ID和聊天ID的文件路径"""
+    """
+    获取指定用户角色、用户ID和聊天ID的文件路径
+    """
     user_dir = get_user_chat_directory(user_id, user_role)
     return user_dir / f"chat_{chat_id}.json"
 
@@ -50,7 +62,11 @@ def get_user_cache_key(user_id: str, user_role: UserRole) -> str:
     return f"{user_role.value}_{user_id}"
 
 
-def get_system_prompt(user_role: UserRole) -> str:
+def get_system_prompt(user_role: UserRole, model: AIModel) -> str:
+    """
+    根据用户角色和模型获取系统提示词
+    """
+    model_name = MODEL_CONFIGS[model]["display_name"]
     base_prompt = "你是一个教育辅助AI助手，名为Lumino教学助手。"
     if user_role == UserRole.TEACHER:
         return base_prompt + "你将协助教师解答教学问题，提供教学建议和资源。"
@@ -66,7 +82,6 @@ def save_chat_to_file(user_id: str, user_role: UserRole, chat_id: str, chat_data
     """保存聊天数据到用户角色专属文件夹"""
     try:
         chat_file = get_chat_file_path(user_id, user_role, chat_id)
-
         # 确保目录存在
         chat_file.parent.mkdir(exist_ok=True, parents=True)
 
@@ -117,7 +132,8 @@ def create_initial_chat_history(
         chat_id: str,
         user_id: str,
         user_role: UserRole,
-        user_messages: List[ChatMessage]
+        user_messages: List[ChatMessage],
+        model: AIModel
 ) -> None:
     """在用户角色专属文件夹中创建初始聊天历史记录"""
     cache_key = get_user_cache_key(user_id, user_role)
@@ -130,7 +146,8 @@ def create_initial_chat_history(
         "messages": [msg.model_dump() for msg in user_messages],
         "created_at": datetime.now().isoformat(),
         "user_id": user_id,
-        "user_role": user_role.value,  # 保存用户角色信息
+        "user_role": user_role.value,
+        "model": model.value,
         "last_updated": datetime.now().isoformat()
     }
 
@@ -140,14 +157,15 @@ def create_initial_chat_history(
     save_chat_to_file(user_id, user_role, chat_id, chat_data)
 
     folder_name = f"{user_role.value}_{user_id}"
-    logger.info(f"初始聊天历史已创建并保存到角色目录: {folder_name}/chat_{chat_id}.json")
+    logger.info(f"初始聊天历史已创建并保存到角色目录: {folder_name}/chat_{chat_id}.json，模型： {model.value}")
 
 
 def append_user_messages_to_history(
         chat_id: str,
         user_id: str,
         user_role: UserRole,
-        user_messages: List[ChatMessage]
+        user_messages: List[ChatMessage],
+        model: AIModel
 ) -> None:
     """向用户角色专属文件夹的聊天历史追加用户消息"""
     cache_key = get_user_cache_key(user_id, user_role)
@@ -165,6 +183,7 @@ def append_user_messages_to_history(
                 "created_at": datetime.now().isoformat(),
                 "user_id": user_id,
                 "user_role": user_role.value,
+                "model": model.value,
                 "last_updated": datetime.now().isoformat()
             }
 
@@ -174,6 +193,8 @@ def append_user_messages_to_history(
 
     # 更新最后修改时间
     chat_history_cache[cache_key][chat_id]["last_updated"] = datetime.now().isoformat()
+    # 更新模型信息
+    chat_history_cache[cache_key][chat_id]["model"] = model.value
 
     # 立即保存到用户角色专属文件夹
     save_chat_to_file(user_id, user_role, chat_id, chat_history_cache[cache_key][chat_id])
@@ -437,7 +458,8 @@ async def get_chat_history(user_id: str, user_role: UserRole, chat_id: Optional[
                     "last_updated": data.get("last_updated", data.get("created_at", "")),
                     "preview": get_chat_preview(data.get("messages", [])),
                     "message_count": valid_count,
-                    "user_role": data.get("user_role", user_role.value)
+                    "user_role": data.get("user_role", user_role.value),
+                    "model": data.get("model", AIModel.KIMI.value)
                 }
                 for cid, data, valid_count in sorted_chats
             ],
@@ -460,8 +482,11 @@ async def process_chat_request(
         user_id: str,
         user_role: UserRole
 ) -> AsyncGenerator[ChatStreamResponse, None]:
-    """处理聊天请求并将历史保存到用户角色专属文件夹"""
+    """
+    处理聊天请求并将历史保存到用户角色专属文件夹
+    """
     folder_name = f"{user_role.value}_{user_id}"
+    model_name = MODEL_CONFIGS[request.model]["display_name"]
     logger.info(f"处理聊天请求: 用户角色目录={folder_name}")
 
     # 记录用户角色专属目录信息
@@ -474,10 +499,10 @@ async def process_chat_request(
 
     # 如果是新对话，立即创建初始历史记录到用户角色专属文件夹
     if is_new_chat:
-        create_initial_chat_history(chat_id, user_id, user_role, request.messages)
+        create_initial_chat_history(chat_id, user_id, user_role, request.messages, request.model)
     else:
         # 现有对话：立即追加用户消息到用户角色专属文件夹
-        append_user_messages_to_history(chat_id, user_id, user_role, request.messages)
+        append_user_messages_to_history(chat_id, user_id, user_role, request.messages, request.model)
 
     # 只在没有AI回复占位符时才初始化
     cache_key = get_user_cache_key(user_id, user_role)
@@ -496,8 +521,11 @@ async def process_chat_request(
         initialize_assistant_response_in_history(chat_id, user_id, user_role)
 
     try:
+        # 获取对应模型的客户端和模型名称
+        client, model_name_api = get_client_and_model(request.model)
+
         # 准备系统提示词
-        system_prompt = get_system_prompt(user_role)
+        system_prompt = get_system_prompt(user_role, request.model)
 
         # 构建完整消息列表，包括系统提示
         messages = [
@@ -520,11 +548,11 @@ async def process_chat_request(
                 "content": msg.content
             })
 
-        logger.info(f"发送到AI的消息数量: {len(messages)}")
+        logger.info(f"发送到 {model_name} 的消息数量: {len(messages)}")
 
         # 调用AI服务获取回答
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model=model_name_api,
             messages=messages,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
@@ -555,6 +583,7 @@ async def process_chat_request(
                 yield ChatStreamResponse(
                     chat_id=chat_id,
                     content=full_content,
+                    model=request.model.value,
                     is_complete=False
                 )
 
@@ -570,12 +599,13 @@ async def process_chat_request(
         yield ChatStreamResponse(
             chat_id=chat_id,
             content=full_content,
+            model=request.model.value,
             is_complete=True
         )
 
         # 记录完成信息
         chat_file_path = get_chat_file_path(user_id, user_role, chat_id)
-        logger.info(f"聊天请求处理完成: 角色目录={folder_name}, 聊天ID={chat_id}, 最终内容长度={len(full_content)}")
+        logger.info(f"聊天请求处理完成: 角色目录={folder_name}, 聊天ID={chat_id}, 模型={model_name}，最终内容长度={len(full_content)}")
         logger.info(f"聊天记录已保存到: {chat_file_path}")
 
     except Exception as e:
@@ -594,5 +624,6 @@ async def process_chat_request(
         yield ChatStreamResponse(
             chat_id=chat_id,
             content=error_content,
+            model=request.model.value,
             is_complete=True
         )
