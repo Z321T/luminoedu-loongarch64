@@ -153,8 +153,8 @@ const loadAvailableModels = async () => {
     console.error('加载模型列表失败:', error)
     // 设置默认模型
     availableModels.value = [
-      { id: AIModel.KIMI, name: 'Kimi', description: 'Kimi 模型' },
-      { id: AIModel.DEEPSEEK, name: 'DeepSeek', description: 'DeepSeek 模型' }
+      { id: AIModel.KIMI, name: 'Kimi', description: 'kimi-k2-0711-preview' },
+      { id: AIModel.DEEPSEEK, name: 'DeepSeek', description: 'deepseek-chat' }
     ]
     selectedModel.value = AIModel.KIMI
   }

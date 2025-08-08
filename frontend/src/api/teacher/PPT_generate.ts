@@ -2,6 +2,19 @@ import api from '../../utils/http'
 
 
 
+// 定义AI模型枚举
+export enum AIModel {
+  DEEPSEEK = 'deepseek',
+  KIMI = 'kimi'
+}
+
+// 定义模型信息
+export interface ModelInfo {
+  id: string
+  name: string
+  description: string
+}
+
 // PPT生成请求接口
 export interface PPTGenerateRequest {
   title: string;
@@ -11,6 +24,7 @@ export interface PPTGenerateRequest {
   target_grade: string;
   slide_count: number;
   additional_info: string | null;
+  model?: AIModel
 }
 
 // PPT大纲响应接口
@@ -30,6 +44,24 @@ export interface PPTSlide {
 export interface PPTCompleteResponse {
   title: string;
   slides: PPTSlide[];
+}
+
+// 获取可用模型列表
+export const getAvailableModels = async (): Promise<{ models: ModelInfo[], default: string }> => {
+  try {
+    const response = await api.get('/chat/models')
+    return response.data
+  } catch (error) {
+    console.error('获取PPT生成模型列表失败:', error)
+    // 返回默认模型列表作为备选
+    return {
+      models: [
+        { id: 'deepseek', name: 'DeepSeek', description: 'deepseek-chat' },
+        { id: 'kimi', name: 'Kimi', description: 'kimi-k2-0711-preview' }
+      ],
+      default: 'kimi'
+    }
+  }
 }
 
 /**
@@ -231,7 +263,6 @@ export const getAllPPTOutlines = async () => {
     throw new Error(errorMessage);
   }
 };
-// ...existing code...
 
 /**
  * 删除指定文件名的PPT大纲

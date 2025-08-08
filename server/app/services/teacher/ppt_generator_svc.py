@@ -3,18 +3,19 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 from fastapi import HTTPException
-from openai import OpenAI
+
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
-from app.config import DEEPSEEK_API_KEY, SERVER_DIR
+from app.config import SERVER_DIR
 from app.core.logger import setup_logger
+from app.core.api_client import MODEL_CONFIGS
 from app.schemas.teacher.ppt_generator_sch import (
     PPTGenerationRequest, PPTGenerationResponse, PPTSlide,
-    PPTOutlineResponse, PPTGenerationFromOutlineRequest
+    PPTOutlineResponse, PPTGenerationFromOutlineRequest, AIModel
 )
 
 # 设置日志
@@ -28,11 +29,18 @@ PPT_FILES_DIR.mkdir(exist_ok=True, parents=True)
 PPT_OUTLINE_MD_DIR.mkdir(exist_ok=True, parents=True)
 PPT_OUTLINE_JSON_DIR.mkdir(exist_ok=True, parents=True)
 
-# 创建 API 客户端
-client = OpenAI(
-    api_key=DEEPSEEK_API_KEY,
-    base_url="https://api.deepseek.com"
-)
+
+
+def get_client_and_model(model: AIModel) -> tuple:
+    """
+    根据模型类型获取对应的客户端和模型名称
+    """
+    config = MODEL_CONFIGS.get(model)
+    if not config:
+        logger.warning(f"未知模型类型: {model}, 使用默认 KIMI")
+        config = MODEL_CONFIGS[AIModel.KIMI]
+
+    return config["client"], config["model_name"], config["display_name"]
 
 
 
@@ -156,25 +164,28 @@ async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> 
     """
     生成PPT的结构化JSON数据，然后转换为Markdown格式大纲
     """
-    logger.info(f"开始生成PPT大纲: 标题={request.title}")
+    logger.info(f"开始生成PPT大纲: 标题={request.title}, 模型={request.model.value}")
 
     try:
+        # 获取对应模型的客户端和模型名称
+        client, model_name, display_name = get_client_and_model(request.model)
+
         # 构建结构化PPT内容的提示词
         structured_prompt = _build_structured_ppt_prompt(request)
         # 调用 API
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model=model_name,
             messages=[
                 {"role": "system", "content": "你是一个专业的教育资源制作助手，擅长生成教学PPT内容。"},
                 {"role": "user", "content": structured_prompt}
             ],
-            temperature=0.7,
-            max_tokens=8000,
+            temperature=0.6,
+            max_tokens=4096,
             stream=False
         )
 
         json_content = response.choices[0].message.content.strip()
-        logger.info("成功从API获取结构化内容")
+        logger.info(f"成功从{display_name}API获取结构化内容")
 
         # 解析JSON数据
         try:
@@ -210,6 +221,7 @@ async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> 
         return PPTOutlineResponse(
             title=request.title,
             outline_md=md_content,
+            model=display_name
         )
 
     except Exception as e:
@@ -575,13 +587,12 @@ async def list_ppt_outlines_service(staff_id: str):
             base_name = filename.rsplit('.', 1)[0]
             parts = base_name.split('_')
 
-            # 提取文件名中的时间戳
-            if len(parts) >= 3:
-                timestamp = parts[2]
-                title = parts[4] if len(parts) > 4 else "未知标题"
+            # 修正文件名解析逻辑
+            # 文件名格式: outline_md_{staff_id}_{timestamp}_{title}.md
+            if len(parts) >= 4:
+                # parts[0] = "outline", parts[1] = "md", parts[2] = staff_id, parts[3] = timestamp
+                title = '_'.join(parts[4:]) if len(parts) > 4 else "未知标题"
             else:
-                # 如果文件名格式不符合预期
-                timestamp = ""
                 title = '未知标题'
 
             # 读取文件内容
@@ -591,7 +602,7 @@ async def list_ppt_outlines_service(staff_id: str):
             outlines.append({
                 "filename": filename,
                 "title": title,
-                "created_at": timestamp,
+                "created_at": file_path.stat().st_ctime,
                 "preview": content[:50] + ("..." if len(content) > 50 else ""),
             })
         except Exception as e:

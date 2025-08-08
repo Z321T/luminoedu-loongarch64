@@ -308,7 +308,7 @@ const sendMessage = async () => {
         {
           messages: messages.value.slice(0, -1),
           chat_id: activeChatId.value,
-          model: selectedModel.value, // 添加缺失的 model 字段
+          model: selectedModel.value,
           max_tokens: 4096,
           temperature: 0.7,
           stream: true,

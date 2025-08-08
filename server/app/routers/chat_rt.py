@@ -24,7 +24,7 @@ async def get_available_models(
         {
             "id": model.value,
             "name": config["display_name"],
-            "description": f"{config['display_name']} 模型"
+            "description": f"{config['model_name']}"
         }
         for model, config in MODEL_CONFIGS.items()
     ]

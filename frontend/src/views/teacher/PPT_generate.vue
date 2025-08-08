@@ -30,39 +30,24 @@
 
             <!-- 导航按钮 -->
             <div class="nav-buttons">
-              <router-link
-                to="/teacher/ppt/files"
-                class="outline-nav-btn"
-              >
+              <router-link to="/teacher/ppt/files" class="outline-nav-btn">
                 <i class="icon-list"></i> 查看我的PPT文件
               </router-link>
-              <router-link
-                to="/teacher/ppt/outline"
-                class="outline-nav-btn"
-              >
+              <router-link to="/teacher/ppt/outline" class="outline-nav-btn">
                 <i class="icon-list"></i> 查看我的大纲
               </router-link>
             </div>
           </div>
 
           <!-- 错误提示 -->
-          <div
-            v-if="errorMessage"
-            class="error-message"
-          >
+          <div v-if="errorMessage" class="error-message">
             <i class="icon-error"></i>
             <span>{{ errorMessage }}</span>
-            <button
-              @click="clearError"
-              class="close-btn"
-            >&times;</button>
+            <button @click="clearError" class="close-btn">&times;</button>
           </div>
 
           <!-- 成功提示 -->
-          <div
-            v-if="showSuccess"
-            class="success-message"
-          >
+          <div v-if="showSuccess" class="success-message">
             <i class="icon-success"></i>
             <span>{{ successMessage }}</span>
           </div>
@@ -149,6 +134,7 @@
                   </div>
                 </div>
 
+
                 <div class="form-group">
                   <label for="teaching_target">教学目标 <span
                       class="required">*</span></label>
@@ -198,6 +184,27 @@
                     </button>
                   </div>
                 </div>
+
+                <!-- AI模型选择 -->
+                <div class="form-group">
+                  <label class="form-label">模型选择 <span class="required">*</span></label>
+                  <select
+                    id="model"
+                    v-model="formData.model"
+                    class="form-control"
+                    :disabled="isLoading"
+                  >
+                    <option
+                      v-for="model in availableModels"
+                      :key="model.id"
+                      :value="model.id"
+                    >
+                      {{ model.name }} - {{ model.description }}
+                    </option>
+                  </select>
+                  <small class="form-hint">选择不同的模型可能会产生不同风格的大纲内容</small>
+                </div>
+
 
                 <div class="form-group">
                   <label for="additional_info">附加信息 (可选)</label>
@@ -480,12 +487,21 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { generatePPTOutline, generatePPTFromOutline, downloadPPTXfile, downloadPPTOutlineFile } from '@/api/teacher/PPT_generate';
+import {
+  generatePPTOutline,
+  generatePPTFromOutline,
+  downloadPPTXfile,
+  downloadPPTOutlineFile,
+  getAvailableModels
+} from '@/api/teacher/PPT_generate';
 import { marked } from 'marked';
 import PageHeader from '@/components/layout/PageHeader.vue';
 import SideBar from '@/components/layout/SideBar.vue';
 
 const router = useRouter();
+// 模型相关状态
+const availableModels = ref([]);
+const defaultModel = ref('');
 
 // 表单数据
 const formData = reactive({
@@ -495,7 +511,8 @@ const formData = reactive({
   key_points: [''],
   target_grade: '',
   slide_count: 10,
-  additional_info: ''
+  additional_info: '',
+  model: ''
 });
 
 // 状态管理
@@ -547,7 +564,8 @@ const isFormValid = computed(() => {
       formData.subject.trim().length > 0 &&
       formData.teaching_target.trim().length > 0 &&
       keyPointsValid &&
-      formData.target_grade.trim().length > 0
+      formData.target_grade.trim().length > 0 &&
+      formData.model.trim().length > 0
   );
 });
 
@@ -563,6 +581,27 @@ const renderedOutline = computed(() => {
 const username = computed(() => {
   return localStorage.getItem('username') || '教师用户';
 });
+// 加载可用模型
+const loadAvailableModels = async () => {
+  try {
+    const response = await getAvailableModels();
+    availableModels.value = response.models;
+    defaultModel.value = response.default;
+
+    // 设置默认模型
+    if (defaultModel.value && !formData.model) {
+      formData.model = defaultModel.value;
+    }
+  } catch (error) {
+    console.error('加载模型列表失败:', error);
+    // 如果加载失败，设置默认模型
+    availableModels.value = [
+      { id: 'deepseek', name: 'DeepSeek', description: 'deepseek-chat' },
+      { id: 'kimi', name: 'Kimi', description: 'kimi-k2-0711-preview' }
+    ];
+    formData.model = 'kimi';
+  }
+};
 
 // 侧边栏相关方法
 const handleMenuClick = (item) => {
@@ -619,7 +658,8 @@ const generateOutline = async () => {
       key_points: formData.key_points.filter(point => point.trim() !== ''),
       target_grade: formData.target_grade.trim(),
       slide_count: formData.slide_count,
-      additional_info: formData.additional_info.trim() || null
+      additional_info: formData.additional_info.trim() || null,
+      model: formData.model
     };
 
     const result = await generatePPTOutline(requestData);
@@ -855,6 +895,7 @@ const resetForm = () => {
   formData.target_grade = '';
   formData.slide_count = 10;
   formData.additional_info = '';
+  formData.model = defaultModel.value || (availableModels.value.length > 0 ? availableModels.value[0].id : '');
   outlineResult.value = null;
   clearError();
 };
@@ -879,8 +920,9 @@ const handleLogout = () => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
   console.log('PPT生成页面已加载');
+  await loadAvailableModels();
 });
 </script>
 

@@ -1,5 +1,12 @@
+from enum import Enum
 from pydantic import BaseModel, Field
 from typing import List, Optional
+
+
+
+class AIModel(str, Enum):
+    DEEPSEEK = "deepseek"
+    KIMI = "kimi"
 
 
 class PPTGenerationRequest(BaseModel):
@@ -10,6 +17,7 @@ class PPTGenerationRequest(BaseModel):
     key_points: List[str] = Field(..., max_length=100,description="教学重点列表")
     target_grade: str = Field(..., description="目标年级")
     slide_count: int = Field(default=10, ge=5, le=20, description="期望的幻灯片数量")
+    model: AIModel = Field(default=AIModel.KIMI, description="选择的AI模型")
     additional_info: Optional[str] = None
 
 
@@ -31,6 +39,7 @@ class PPTOutlineResponse(BaseModel):
     """PPT大纲响应模型"""
     title: str
     outline_md: str  # Markdown格式的PPT大纲
+    model: str = Field(..., description="使用的AI模型")
 
 
 class PPTGenerationFromOutlineRequest(BaseModel):

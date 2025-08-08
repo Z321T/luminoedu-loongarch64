@@ -6,7 +6,8 @@ from app.core.logger import setup_logger
 from app.models.teacher import Teacher
 from app.schemas.teacher.ppt_generator_sch import (
     PPTGenerationRequest, PPTGenerationResponse,
-    PPTOutlineResponse, PPTGenerationFromOutlineRequest
+    PPTOutlineResponse, PPTGenerationFromOutlineRequest,
+    AIModel
 )
 from app.services.teacher.ppt_generator_svc import (
     generate_ppt_outline, generate_ppt_from_outline,
@@ -28,7 +29,7 @@ async def generate_ppt_outline_endpoint(
     生成PPT的md格式大纲(第一步)
     """
     try:
-        logger.info(f"教师 {current_user.username}(教工号:{current_user.staff_id}) 请求生成PPT大纲: {request.title}")
+        logger.info(f"教师 {current_user.username}(教工号:{current_user.staff_id}) 请求生成PPT大纲: {request.title}, 使用模型: {request.model.value}")
         response = await generate_ppt_outline(request, current_user.staff_id)
         return response
     except Exception as e:
@@ -103,6 +104,7 @@ async def generate_ppt_from_outline_endpoint(
 ):
     """
     从md格式大纲生成PPT (第二步)
+    支持选择不同的AI模型
     """
     try:
         logger.info(f"教师 {current_user.username}(教工号:{current_user.staff_id}) 从大纲生成PPT")
@@ -111,7 +113,7 @@ async def generate_ppt_from_outline_endpoint(
         # 构造请求对象
         request = PPTGenerationFromOutlineRequest(
             title=title,
-            outline_md=outline_md
+            outline_md=outline_md,
         )
         response = await generate_ppt_from_outline(request, current_user.staff_id)
         return response

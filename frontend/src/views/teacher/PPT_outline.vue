@@ -93,10 +93,40 @@ const teacherMenuItems = [
   { path: '/teacher/profile', label: '个人信息' },
 ]
 
-const formatDate = (dateString: string): string => {
-  if (!dateString) return '未知日期'
-  const date = new Date(dateString)
-  return date.toLocaleString()
+const formatDate = (timestamp: any): string => {
+  if (!timestamp) return '未知日期'
+
+  let date: Date
+
+  // 处理不同类型的时间戳
+  if (typeof timestamp === 'string') {
+    // 如果是字符串，直接解析
+    date = new Date(timestamp)
+  } else if (typeof timestamp === 'number') {
+    // 如果是数字，判断是秒级还是毫秒级时间戳
+    // 假设小于10000000000的是秒级时间戳
+    if (timestamp < 10000000000) {
+      date = new Date(timestamp * 1000)
+    } else {
+      date = new Date(timestamp)
+    }
+  } else {
+    return '无效日期'
+  }
+
+  // 检查日期是否有效
+  if (isNaN(date.getTime())) {
+    return '无效日期'
+  }
+
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
 }
 
 const loadOutlines = async () => {
