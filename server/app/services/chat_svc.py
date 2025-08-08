@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from app.config import DEEPSEEK_API_KEY, MEDIA_ROOT
+from app.config import DEEPSEEK_API_KEY, KIMI_API_KEY, MEDIA_ROOT
 from app.core.logger import setup_logger
 from app.models.user_common import UserRole
 from app.schemas.chat_sch import (

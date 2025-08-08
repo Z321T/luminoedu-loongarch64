@@ -1,16 +1,14 @@
-import re
-
+import json
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 
 from fastapi import HTTPException
 from openai import OpenAI
-
 from pptx import Presentation
-from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
+from pptx.util import Inches, Pt
 
 from app.config import DEEPSEEK_API_KEY, SERVER_DIR
 from app.core.logger import setup_logger
@@ -24,9 +22,11 @@ logger = setup_logger("ppt_generator_service")
 
 # PPT文件存储目录
 PPT_FILES_DIR = SERVER_DIR / "app" / "documents" / "ppt_files"
-PPT_OUTLINE_DIR = SERVER_DIR / "app" / "documents" / "ppt_outlines"
+PPT_OUTLINE_MD_DIR = SERVER_DIR / "app" / "documents" / "ppt_outlines" / "markdown"
+PPT_OUTLINE_JSON_DIR = SERVER_DIR / "app" / "documents" / "ppt_outlines" / "json"
 PPT_FILES_DIR.mkdir(exist_ok=True, parents=True)
-PPT_OUTLINE_DIR.mkdir(exist_ok=True, parents=True)
+PPT_OUTLINE_MD_DIR.mkdir(exist_ok=True, parents=True)
+PPT_OUTLINE_JSON_DIR.mkdir(exist_ok=True, parents=True)
 
 # 创建 API 客户端
 client = OpenAI(
@@ -35,62 +35,177 @@ client = OpenAI(
 )
 
 
+
+def _build_structured_ppt_prompt(request: PPTGenerationRequest) -> str:
+    """构建生成结构化PPT内容的提示词"""
+    return f"""你是一位经验丰富的教师和课件专家，请为以下教学内容设计一个详细且内容丰富的PPT结构化数据:
+
+标题: {request.title}
+学科: {request.subject}
+目标年级: {request.target_grade}
+教学目标: {request.teaching_target}
+教学重点: {', '.join(request.key_points)}
+幻灯片数量: {request.slide_count}
+{f"其他信息: {request.additional_info}" if request.additional_info else ""}
+
+请生成{request.slide_count}张幻灯片的结构化数据，每张幻灯片包含以下字段：
+- slide_number: 幻灯片序号（1开始）
+- slide_type: 幻灯片类型（"cover"=封面、"objective"=学习目标、"content"=内容讲解、"example"=示例代码、"exercise"=练习活动、"summary"=总结）
+- title: 幻灯片标题
+- main_content: 主要内容（知识点、概念、定义等）
+- bullet_points: 要点列表（数组格式）
+- code_example: 示例代码（如果有的话，使用具体可执行的代码）
+- exercise_content: 练习内容（如果是练习类型幻灯片）
+- key_takeaways: 关键要点（数组格式）
+- teacher_notes: 教师备注
+
+要求：
+1. 内容具体、丰富、实用，避免空洞的表述
+2. 对于编程相关内容，提供实际的代码片段
+3. 对于概念解释，给出明确的定义和具体例子
+4. 确保生成符合要求的幻灯片数量
+5. 每个字段都要有内容，如果某字段不适用则填入空字符串或空数组
+
+请以JSON数组格式返回，只返回JSON数据，不要有其他说明文字。
+
+示例格式：
+[
+  {{
+    "slide_number": 1,
+    "slide_type": "cover",
+    "title": "课程标题",
+    "main_content": "课程简介内容",
+    "bullet_points": ["要点1", "要点2"],
+    "code_example": "",
+    "exercise_content": "",
+    "key_takeaways": ["关键点1", "关键点2"],
+    "teacher_notes": "教师备注内容"
+  }}
+]"""
+
+
+
+def _convert_json_to_markdown(slides_data: List[Dict[str, Any]]) -> str:
+    """将结构化JSON数据转换为Markdown格式"""
+    md_lines = []
+
+    for slide in slides_data:
+        slide_num = slide.get("slide_number", 1)
+        slide_type = slide.get("slide_type", "content")
+        title = slide.get("title", "")
+
+        # 幻灯片分隔和标题
+        md_lines.append(f"# 幻灯片 {slide_num}")
+        md_lines.append(f"## {title}")
+        md_lines.append("")
+
+        # 主要内容
+        main_content = slide.get("main_content", "")
+        if main_content:
+            md_lines.append("### 主要内容")
+            md_lines.append(main_content)
+            md_lines.append("")
+
+        # 要点列表
+        bullet_points = slide.get("bullet_points", [])
+        if bullet_points:
+            md_lines.append("### 要点")
+            for point in bullet_points:
+                md_lines.append(f"- {point}")
+            md_lines.append("")
+
+        # 示例代码
+        code_example = slide.get("code_example", "")
+        if code_example:
+            md_lines.append("### 示例代码")
+            md_lines.append("```")
+            md_lines.append(code_example)
+            md_lines.append("```")
+            md_lines.append("")
+
+        # 练习内容
+        exercise_content = slide.get("exercise_content", "")
+        if exercise_content:
+            md_lines.append("### 练习")
+            md_lines.append(exercise_content)
+            md_lines.append("")
+
+        # 关键要点
+        key_takeaways = slide.get("key_takeaways", [])
+        if key_takeaways:
+            md_lines.append("### 关键要点")
+            for takeaway in key_takeaways:
+                md_lines.append(f"- **{takeaway}**")
+            md_lines.append("")
+
+        # 教师备注
+        teacher_notes = slide.get("teacher_notes", "")
+        if teacher_notes:
+            md_lines.append("## 教师备注")
+            md_lines.append(teacher_notes)
+            md_lines.append("")
+
+        md_lines.append("---")
+        md_lines.append("")
+
+    return "\n".join(md_lines)
+
+
+
 async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> PPTOutlineResponse:
     """
-    生成PPT的Markdown格式大纲
+    生成PPT的结构化JSON数据，然后转换为Markdown格式大纲
     """
     logger.info(f"开始生成PPT大纲: 标题={request.title}")
 
-    prompt = f"""你是一位经验丰富的教师和课件专家，请为以下教学内容设计一个详细且内容丰富的PPT大纲:
-    
-    标题: {request.title}
-    学科: {request.subject}
-    目标年级: {request.target_grade}
-    教学目标: {request.teaching_target}
-    教学重点: {', '.join(request.key_points)}
-    幻灯片数量: {request.slide_count}
-    {f"其他信息: {request.additional_info}" if request.additional_info else ""}
-    
-    请生成{request.slide_count}张幻灯片的md格式设计，要求每张幻灯片的内容具体、丰富、实用，避免空洞的表述。内容需要包括:
-    1. 封面页(标题+简介)
-    2. 学习目标页(详细列出具体可衡量的学习成果)
-    3. 内容页(核心知识讲解，包含具体概念、定义、原理和示例代码)
-    4. 案例/示例页(真实可执行的代码示例，而非空泛描述)
-    5. 练习/活动页(有明确步骤和要求的练习题)
-    6. 总结页(具体的知识点总结，不要简单重复前面内容)
-    
-    对于编程相关内容，请提供实际的代码片段而非仅描述代码功能。
-    对于概念解释，请给出明确的定义和具体的例子。
-    对于操作步骤，请提供详细的分步骤说明。
-    
-    请提供一个完整的Markdown格式大纲，包含每张幻灯片的标题和内容。
-    
-    请确保生成了符合要求的幻灯片数量，字数适中且内容有教学价值。
-    """
-
     try:
-        # 使用 OpenAI 客户端调用 API
+        # 构建结构化PPT内容的提示词
+        structured_prompt = _build_structured_ppt_prompt(request)
+        # 调用 API
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
                 {"role": "system", "content": "你是一个专业的教育资源制作助手，擅长生成教学PPT内容。"},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": structured_prompt}
             ],
             temperature=0.7,
             max_tokens=8000,
             stream=False
         )
 
-        md_content = response.choices[0].message.content
-        logger.info(f"成功从API获取大纲内容")
+        json_content = response.choices[0].message.content.strip()
+        logger.info("成功从API获取结构化内容")
 
-        # 保存大纲到文件
+        # 解析JSON数据
+        try:
+            # 移除可能的代码块标记
+            if json_content.startswith('```json'):
+                json_content = json_content[7:]
+            if json_content.endswith('```'):
+                json_content = json_content[:-3]
+
+            slides_data = json.loads(json_content)
+            logger.info(f"成功解析JSON数据，包含{len(slides_data)}张幻灯片")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析失败: {str(e)}")
+            raise Exception(f"AI返回的数据格式错误: {str(e)}")
+
+        # 将JSON转换为Markdown格式
+        md_content = _convert_json_to_markdown(slides_data)
+        # 保存JSON和Markdown文件
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        outline_path = PPT_OUTLINE_DIR / f"outline_{staff_id}_{timestamp}_{request.title}.md"
+
+        # 保存JSON文件
+        json_path = PPT_OUTLINE_JSON_DIR / f"outline_json_{staff_id}_{timestamp}_{request.title}.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(slides_data, f, ensure_ascii=False, indent=2)
+        logger.info(f"结构化数据已保存到: {json_path}")
+
+        # 保存Markdown文件
+        outline_path = PPT_OUTLINE_MD_DIR / f"outline_md_{staff_id}_{timestamp}_{request.title}.md"
         with open(outline_path, "w", encoding="utf-8") as f:
             f.write(md_content)
-
-        logger.info(f"大纲已保存到文件: {outline_path}")
+        logger.info(f"大纲已保存到: {outline_path}")
 
         return PPTOutlineResponse(
             title=request.title,
@@ -103,6 +218,82 @@ async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> 
 
 
 
+def _try_load_corresponding_json(staff_id: str, title: str) -> Optional[List[Dict[str, Any]]]:
+    """尝试加载对应的JSON文件"""
+    try:
+        # 查找匹配的JSON文件
+        pattern = f"outline_json_{staff_id}_*_{title}.json"
+        json_files = list(PPT_OUTLINE_JSON_DIR.glob(pattern))
+
+        if json_files:
+            # 使用最新的文件
+            latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"加载JSON文件失败: {str(e)}")
+
+    return None
+
+
+
+def _convert_json_to_slide_data(json_data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """将JSON结构化数据转换为幻灯片数据"""
+    slides_data = []
+
+    for slide_json in json_data:
+        slide_data = {
+            "title": slide_json.get("title", ""),
+            "content": "",
+            "note": slide_json.get("teacher_notes", "")
+        }
+
+        # 构建内容
+        content_parts = []
+
+        # 主要内容
+        main_content = slide_json.get("main_content", "")
+        if main_content:
+            content_parts.append(main_content)
+
+        # 要点列表
+        bullet_points = slide_json.get("bullet_points", [])
+        if bullet_points:
+            content_parts.append("")  # 空行分隔
+            for point in bullet_points:
+                content_parts.append(f"• {point}")
+
+        # 示例代码
+        code_example = slide_json.get("code_example", "")
+        if code_example:
+            content_parts.append("")
+            content_parts.append("**示例代码：**")
+            content_parts.append("```")
+            content_parts.append(code_example)
+            content_parts.append("```")
+
+        # 练习内容
+        exercise_content = slide_json.get("exercise_content", "")
+        if exercise_content:
+            content_parts.append("")
+            content_parts.append("**练习：**")
+            content_parts.append(exercise_content)
+
+        # 关键要点
+        key_takeaways = slide_json.get("key_takeaways", [])
+        if key_takeaways:
+            content_parts.append("")
+            content_parts.append("**关键要点：**")
+            for takeaway in key_takeaways:
+                content_parts.append(f"★ {takeaway}")
+
+        slide_data["content"] = "\n".join(content_parts)
+        slides_data.append(slide_data)
+
+    return slides_data
+
+
+
 async def generate_ppt_from_outline(
         request: PPTGenerationFromOutlineRequest,
         staff_id: str
@@ -111,15 +302,24 @@ async def generate_ppt_from_outline(
     logger.info(f"从大纲生成PPT: 标题={request.title}, 教师ID={staff_id}")
 
     try:
-        # 将大纲解析为结构化数据
-        slides_data = parse_markdown_outline(request.outline_md)
+        # 尝试找到对应的JSON文件
+        json_data = _try_load_corresponding_json(staff_id, request.title)
+
+        if json_data:
+            # 使用JSON数据生成PPT
+            slides_data = _convert_json_to_slide_data(json_data)
+            logger.info("使用JSON结构化数据生成PPT")
+        else:
+            # 回退到解析Markdown的方式
+            slides_data = parse_markdown_outline(request.outline_md)
+            logger.info("使用Markdown解析方式生成PPT")
 
         # 生成文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         file_name = f"ppt_{staff_id}_{timestamp}_{request.title.replace(' ', '_')}.pptx"
 
         # 创建PPT文件
-        file_path = create_pptx(slides_data, file_name)
+        file_path = create_pptx_from_structured_data(slides_data, file_name)
 
         # 构建返回结果
         slides = [
@@ -143,6 +343,154 @@ async def generate_ppt_from_outline(
 
 
 
+def create_pptx_from_structured_data(slides_data: List[Dict[str, str]], file_name: str) -> str:
+    """
+    基于结构化数据创建PPT文件
+    """
+    try:
+        # 创建演示文稿
+        prs = Presentation()
+        slide_width = prs.slide_width
+        slide_height = prs.slide_height
+
+        for slide_data in slides_data:
+            # 新建空白幻灯片
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+            # 标题文本框
+            left = Inches(0.5)
+            top = Inches(0.4)
+            width = slide_width - Inches(1)
+            height = Inches(1.2)
+            title_box = slide.shapes.add_textbox(left, top, width, height)
+            title_tf = title_box.text_frame
+            title_tf.text = slide_data["title"]
+            title_p = title_tf.paragraphs[0]
+            title_p.font.size = Pt(32)
+            title_p.font.bold = True
+            title_p.font.name = "微软雅黑"
+            title_p.font.color.rgb = RGBColor(31, 56, 100)
+            title_p.alignment = PP_ALIGN.LEFT
+
+            # 内容文本框
+            content_top = top + height + Inches(0.2)
+            content_height = slide_height - content_top - Inches(0.5)
+            content_box = slide.shapes.add_textbox(left, content_top, width, content_height)
+            content_tf = content_box.text_frame
+            content_tf.word_wrap = True
+
+            # 解析并添加内容
+            _parse_and_add_content(slide, content_tf, slide_data["content"], left, content_top, width)
+
+            # 添加备注
+            if slide_data.get("note"):
+                slide.notes_slide.notes_text_frame.text = slide_data["note"]
+
+        # 保存文件
+        file_path = PPT_FILES_DIR / file_name
+        prs.save(str(file_path))
+
+        logger.info(f"PPT文件已保存: {file_path}")
+        return str(file_path)
+
+    except Exception as e:
+        logger.error(f"创建PPT失败: {str(e)}")
+        raise Exception(f"创建PPT失败: {str(e)}")
+
+
+
+def _parse_and_add_content(slide, content_tf, content: str, left, top, width):
+    """解析内容并添加到幻灯片"""
+    lines = content.split('\n')
+    in_code = False
+    code_lines = []
+    current_y_offset = 0
+
+    for line in lines:
+        line = line.strip()
+
+        # 处理代码块
+        if line == '```':
+            if in_code:
+                # 结束代码块
+                if code_lines:
+                    current_y_offset += _add_code_block_to_slide(
+                        slide, code_lines, left, top + Inches(current_y_offset), width
+                    )
+                code_lines = []
+                in_code = False
+            else:
+                in_code = True
+            continue
+
+        if in_code:
+            code_lines.append(line)
+            continue
+
+        if not line:
+            continue
+
+        # 处理不同类型的内容
+        if line.startswith('• ') or line.startswith('★ '):
+            # 列表项
+            p = content_tf.add_paragraph()
+            p.text = line[2:]  # 移除符号
+            p.level = 0
+            p.font.size = Pt(20)
+            p.font.name = "微软雅黑"
+            if line.startswith('★ '):
+                p.font.bold = True
+                p.font.color.rgb = RGBColor(200, 50, 50)
+        elif line.startswith('**') and line.endswith('**'):
+            # 加粗标题
+            p = content_tf.add_paragraph()
+            p.text = line.replace('**', '')
+            p.font.size = Pt(24)
+            p.font.bold = True
+            p.font.name = "微软雅黑"
+            p.font.color.rgb = RGBColor(50, 100, 150)
+        else:
+            # 普通文本
+            p = content_tf.add_paragraph()
+            p.text = line
+            p.font.size = Pt(20)
+            p.font.name = "微软雅黑"
+
+
+
+def _add_code_block_to_slide(slide, code_lines: List[str], left, top, width) -> float:
+    """在幻灯片上添加代码块并返回占用的高度（英寸）"""
+    if not code_lines:
+        return 0
+
+    code_text = "\n".join(code_lines)
+    # 估算高度
+    height = Pt(18) * (len(code_lines) + 1) + Inches(0.3)
+
+    code_box = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, left, top, width, height
+    )
+    code_box.fill.solid()
+    code_box.fill.fore_color.rgb = RGBColor(245, 245, 245)
+    code_box.line.color.rgb = RGBColor(200, 200, 200)
+
+    code_tf = code_box.text_frame
+    code_tf.word_wrap = True
+    code_tf.margin_left = Inches(0.1)
+    code_tf.margin_top = Inches(0.1)
+
+    p = code_tf.paragraphs[0]
+    p.text = code_text
+    p.font.size = Pt(16)
+    p.font.name = "Consolas"
+    p.font.color.rgb = RGBColor(60, 60, 60)
+
+    # 返回占用的高度（转换为英寸）
+    return height / 914400  # EMU到英寸的转换
+
+
+
+# 保持原有的parse_markdown_outline函数作为备用
 def parse_markdown_outline(outline_md: str) -> List[Dict[str, str]]:
     """解析Markdown大纲为幻灯片数据列表"""
     slides = []
@@ -209,131 +557,6 @@ def parse_markdown_outline(outline_md: str) -> List[Dict[str, str]]:
 
 
 
-def create_pptx(slides_data: List[Dict[str, str]], file_name: str) -> str:
-    """创建基本的PPT文件"""
-    try:
-        # 创建演示文稿
-        prs = Presentation()
-        slide_width = prs.slide_width
-        slide_height = prs.slide_height
-
-        for slide_data in slides_data:
-            # 新建空白幻灯片
-            slide = prs.slides.add_slide(prs.slide_layouts[6])
-
-            # 标题文本框（左上角）
-            left = Inches(0.5)
-            top = Inches(0.4)
-            width = slide_width - Inches(1)
-            height = Inches(1)
-            title_box = slide.shapes.add_textbox(left, top, width, height)
-            title_tf = title_box.text_frame
-            title_tf.text = slide_data["title"]
-            title_p = title_tf.paragraphs[0]
-            title_p.font.size = Pt(32)
-            title_p.font.bold = True
-            title_p.font.name = "微软雅黑"
-            title_p.font.color.rgb = RGBColor(31, 56, 100)
-            title_p.alignment = PP_ALIGN.LEFT
-
-            # 内容文本框（标题下方）
-            content_top = top + height + Inches(0.1)
-            content_height = slide_height - content_top - Inches(0.5)
-            content_box = slide.shapes.add_textbox(left, content_top, width, content_height)
-            content_tf = content_box.text_frame
-            content_tf.word_wrap = True
-
-            # 处理内容，支持列表、加粗、代码块
-            lines = slide_data["content"].splitlines()
-            in_code = False
-            code_buf = []
-            for line in lines:
-                line = line.rstrip()
-                # 代码块处理
-                if re.match(r"^```", line):
-                    if in_code:
-                        # 结束代码块，插入代码
-                        _add_code_block(slide, code_buf, left, content_top, width)
-                        code_buf = []
-                        in_code = False
-                    else:
-                        in_code = True
-                    continue
-                if in_code:
-                    code_buf.append(line)
-                    continue
-                if not line.strip():
-                    continue
-                # 无序列表
-                if re.match(r"^[-*+]\s+", line):
-                    p = content_tf.add_paragraph()
-                    p.text = line[2:].strip()
-                    p.level = 0
-                    p.font.size = Pt(20)
-                    p.font.name = "微软雅黑"
-                # 有序列表
-                elif re.match(r"^\d+\.\s+", line):
-                    p = content_tf.add_paragraph()
-                    p.text = line.split(".", 1)[1].strip()
-                    p.level = 0
-                    p.font.size = Pt(20)
-                    p.font.name = "微软雅黑"
-                # 加粗
-                elif line.startswith("**") and line.endswith("**"):
-                    p = content_tf.add_paragraph()
-                    p.text = line.replace("**", "")
-                    p.font.size = Pt(22)
-                    p.font.bold = True
-                    p.font.name = "微软雅黑"
-                else:
-                    p = content_tf.add_paragraph()
-                    p.text = line.replace("**", "")
-                    p.font.size = Pt(20)
-                    p.font.name = "微软雅黑"
-
-            # 添加备注
-            if slide_data.get("note"):
-                slide.notes_slide.notes_text_frame.text = slide_data["note"]
-
-        # 保存文件
-        file_path = PPT_FILES_DIR / file_name
-        prs.save(str(file_path))
-
-        logger.info(f"PPT文件已保存: {file_path}")
-        return str(file_path)
-
-    except Exception as e:
-        logger.error(f"创建PPT失败: {str(e)}")
-        raise Exception(f"创建PPT失败: {str(e)}")
-
-
-
-def _add_code_block(slide, code_lines, left, top, width):
-    """在幻灯片上添加代码块文本框（灰色背景，等宽字体）"""
-    from pptx.util import Pt, Inches
-    from pptx.dml.color import RGBColor
-    from pptx.enum.shapes import MSO_SHAPE
-
-    code_text = "\n".join(code_lines)
-    # 估算高度
-    height = Pt(20) * (len(code_lines) + 1) + Inches(0.2)
-    code_box = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE, left, top + Inches(1), width, height
-    )
-    code_box.fill.solid()
-    code_box.fill.fore_color.rgb = RGBColor(240, 240, 240)
-    code_box.line.color.rgb = RGBColor(200, 200, 200)
-    code_tf = code_box.text_frame
-    code_tf.word_wrap = True
-    p = code_tf.paragraphs[0]
-    p.text = code_text
-    p.font.size = Pt(16)
-    p.font.name = "Consolas"
-    p.font.color.rgb = RGBColor(60, 60, 60)
-
-
-
-
 async def list_ppt_outlines_service(staff_id: str):
     """
     列出教师的所有PPT大纲
@@ -346,7 +569,7 @@ async def list_ppt_outlines_service(staff_id: str):
     """
     outlines = []
 
-    for file_path in PPT_OUTLINE_DIR.glob(f"outline_{staff_id}_*.md"):
+    for file_path in PPT_OUTLINE_MD_DIR.glob(f"outline_md_{staff_id}_*.md"):
         try:
             filename = file_path.name
             base_name = filename.rsplit('.', 1)[0]
@@ -394,11 +617,11 @@ async def download_ppt_outline_service(file_name: str, staff_id: str):
         HTTPException: 当权限验证失败或文件不存在时
     """
     # 验证文件权限
-    if not file_name.startswith(f"outline_{staff_id}_"):
+    if not file_name.startswith(f"outline_md_{staff_id}_"):
         logger.warning(f"教师(工号:{staff_id}) 尝试访问非自己的大纲文件: {file_name}")
         raise HTTPException(status_code=403, detail="没有权限访问此文件")
 
-    file_path = PPT_OUTLINE_DIR / file_name
+    file_path = PPT_OUTLINE_MD_DIR / file_name
     if not file_path.exists():
         logger.warning(f"教师(工号:{staff_id}) 请求的大纲文件不存在: {file_name}")
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -463,7 +686,7 @@ async def download_ppt_service(file_name: str, staff_id: str):
 
 async def delete_ppt_outline_service(file_name: str, staff_id: str) -> None:
     """
-    删除PPT大纲文件
+    删除PPT大纲文件，需要同时删除md与json格式的大纲文件
 
     Args:
         file_name: 要删除的大纲文件名
@@ -472,19 +695,40 @@ async def delete_ppt_outline_service(file_name: str, staff_id: str) -> None:
     Raises:
         HTTPException: 当权限验证失败或文件不存在时
     """
-    # 验证文件权限 (格式应为 outline_staff_id_*.md)
-    if not file_name.startswith(f"outline_{staff_id}_"):
+    # 验证文件权限 (格式应为 outline_md_staff_id_*.md)
+    if not file_name.startswith(f"outline_md_{staff_id}_"):
         logger.warning(f"权限拒绝: 教师(工号:{staff_id})尝试删除非本人大纲: {file_name}")
         raise HTTPException(status_code=403, detail="您无权删除此大纲")
 
-    file_path = PPT_OUTLINE_DIR / file_name
-    if not file_path.exists():
-        logger.warning(f"删除大纲失败: 文件不存在 '{file_path}'")
+    # 构建MD文件路径
+    md_file_path = PPT_OUTLINE_MD_DIR / file_name
+    # 根据MD文件名构建对应的JSON文件名
+    # outline_md_staff_id_timestamp_title.md -> outline_json_staff_id_timestamp_title.json
+    if file_name.endswith(".md"):
+        json_file_name = file_name.replace("outline_md_", "outline_json_").replace(".md", ".json")
+        json_file_path = PPT_OUTLINE_JSON_DIR / json_file_name
+    else:
+        raise HTTPException(status_code=400, detail="不支持的文件类型")
+
+    # 检查MD文件是否存在
+    if not md_file_path.exists():
+        logger.warning(f"删除大纲失败: 文件不存在 '{md_file_path}'")
         raise HTTPException(status_code=404, detail="大纲文件不存在")
 
     try:
-        file_path.unlink()
+        # 删除MD文件
+        md_file_path.unlink()
+        logger.info(f"MD文件已删除: {md_file_path}")
+
+        # 删除对应的JSON文件（如果存在）
+        if json_file_path.exists():
+            json_file_path.unlink()
+            logger.info(f"关联JSON文件已删除: {json_file_path}")
+        else:
+            logger.info(f"JSON文件不存在，跳过删除: {json_file_path}")
+
         logger.info(f"教师(工号:{staff_id})成功删除大纲文件: {file_name}")
+
     except Exception as e:
         logger.error(f"删除大纲文件失败: {str(e)}")
         raise Exception(f"删除大纲文件失败: {str(e)}")

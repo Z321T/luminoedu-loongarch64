@@ -480,7 +480,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { generatePPTOutline, generatePPTFromOutline, downloadPPTXfile } from '@/api/teacher/PPT_generate';
+import { generatePPTOutline, generatePPTFromOutline, downloadPPTXfile, downloadPPTOutlineFile } from '@/api/teacher/PPT_generate';
 import { marked } from 'marked';
 import PageHeader from '@/components/layout/PageHeader.vue';
 import SideBar from '@/components/layout/SideBar.vue';
@@ -654,21 +654,44 @@ const copyOutline = () => {
 };
 
 // 下载Markdown文件
-const downloadOutline = () => {
+const downloadOutline = async () => {
   if (!outlineResult.value) return;
+
   try {
-    const fileName = `${outlineResult.value.title.replace(/[^\w\s]/gi, '')}_大纲.md`;
-    const blob = new Blob([outlineResult.value.outline_md], { type: 'text/markdown;charset=utf-8' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    showQuickTipMessage('Markdown文件下载成功');
+
+    // 正确访问文件名 - 从 outlines 数组中获取
+    const fileName = outlineResult.value.outlines?.[0]?.filename ||
+        outlineResult.value.filename ||
+        `${outlineResult.value.title || '未命名'}_大纲.md`;
+
+    if (!fileName || fileName === 'undefined') {
+      throw new Error('文件名不存在，无法下载');
+    }
+
+    console.log('下载大纲文件名:', fileName);
+
+    // 使用统一的下载函数
+    await downloadPPTOutlineFile(fileName);
+    alert('大纲文件下载已开始')
   } catch (error) {
-    errorMessage.value = '下载失败，请稍后重试';
+    alert(error.message || '下载失败')
   }
 };
+// const downloadOutline = () => {
+//   if (!outlineResult.value) return;
+//   try {
+//     const fileName = outlineResult.value.filename
+//     const blob = new Blob([outlineResult.value.outline_md], { type: 'text/markdown;charset=utf-8' });
+//     const link = document.createElement('a');
+//     link.href = URL.createObjectURL(blob);
+//     link.download = fileName;
+//     link.click();
+//     URL.revokeObjectURL(link.href);
+//     showQuickTipMessage('Markdown文件下载成功');
+//   } catch (error) {
+//     errorMessage.value = '下载失败，请稍后重试';
+//   }
+// };
 
 // 生成PPT
 const generatePPT = async () => {

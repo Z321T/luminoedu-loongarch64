@@ -21,7 +21,7 @@ logger = setup_logger("exercise_generator_service")
 # 文件保存目录
 EXERCISES_BASE_DIR = Path(MEDIA_ROOT) / "exercises"
 JSON_DIR = EXERCISES_BASE_DIR / "json"
-MD_DIR = EXERCISES_BASE_DIR / "md"
+MD_DIR = EXERCISES_BASE_DIR / "markdown"
 
 # 创建必要的目录
 JSON_DIR.mkdir(parents=True, exist_ok=True)
