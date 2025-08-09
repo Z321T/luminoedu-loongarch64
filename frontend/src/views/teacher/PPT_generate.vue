@@ -72,14 +72,14 @@
 
               <div class="card-body">
                 <div class="form-group">
-                  <label for="title">PPT标题 <span
+                  <label for="title">大纲标题 <span
                       class="required">*</span></label>
                   <input
                     type="text"
                     id="title"
                     v-model="formData.title"
                     class="form-control"
-                    placeholder="请输入PPT标题，不超过30个字符"
+                    placeholder="请输入PPT大纲标题，不超过30个字符"
                     maxlength="30"
                     :disabled="isLoading"
                   />

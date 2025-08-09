@@ -1,4 +1,5 @@
 import json
+import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
@@ -160,6 +161,81 @@ def _convert_json_to_markdown(slides_data: List[Dict[str, Any]]) -> str:
 
 
 
+async def _call_ai_with_retry(client, model_name: str, messages: List[Dict], max_retries: int = 3,
+                              timeout: int = 120) -> str:
+    """
+    带重试机制的AI API调用
+
+    Args:
+        client: AI客户端
+        model_name: 模型名称
+        messages: 消息列表
+        max_retries: 最大重试次数
+        timeout: 超时时间（秒）
+
+    Returns:
+        AI返回的内容
+
+    Raises:
+        Exception: 当所有重试都失败时
+    """
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"正在调用AI接口... (尝试 {attempt + 1}/{max_retries})")
+
+            # 根据幻灯片数量动态调整token数量
+            slide_count = 10  # 默认值
+            for msg in messages:
+                if "幻灯片数量:" in msg.get("content", ""):
+                    try:
+                        # 从消息中提取幻灯片数量
+                        content = msg["content"]
+                        start = content.find("幻灯片数量:") + len("幻灯片数量:")
+                        end = content.find("\n", start)
+                        if end == -1:
+                            end = len(content)
+                        slide_count = int(content[start:end].strip())
+                    except:
+                        pass
+
+            # 动态计算max_tokens，每张幻灯片大约需要500-800 tokens
+            max_tokens = min(max(slide_count * 600, 4096), 16384)
+
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=0.6,
+                max_tokens=max_tokens,
+                stream=False,
+                timeout=timeout
+            )
+
+            content = response.choices[0].message.content.strip()
+            if content:
+                logger.info(f"AI接口调用成功 (尝试 {attempt + 1})")
+                return content
+            else:
+                raise Exception("AI返回空内容")
+
+        except Exception as e:
+            last_exception = e
+            logger.warning(f"第{attempt + 1}次AI调用失败: {str(e)}")
+
+            if attempt < max_retries - 1:
+                # 指数退避重试
+                wait_time = 2 ** attempt
+                logger.info(f"等待{wait_time}秒后重试...")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"AI调用失败，已达到最大重试次数")
+
+    # 所有重试都失败
+    raise Exception(f"AI调用失败，已重试{max_retries}次。最后错误: {str(last_exception)}")
+
+
+
 async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> PPTOutlineResponse:
     """
     生成PPT的结构化JSON数据，然后转换为Markdown格式大纲
@@ -172,19 +248,26 @@ async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> 
 
         # 构建结构化PPT内容的提示词
         structured_prompt = _build_structured_ppt_prompt(request)
-        # 调用 API
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": "你是一个专业的教育资源制作助手，擅长生成教学PPT内容。"},
-                {"role": "user", "content": structured_prompt}
-            ],
-            temperature=0.6,
-            max_tokens=4096,
-            stream=False
+
+        # 设置消息
+        messages = [
+            {"role": "system",
+             "content": "你是一个专业的教育资源制作助手，擅长生成教学PPT内容。请严格按照要求的JSON格式返回数据。"},
+            {"role": "user", "content": structured_prompt}
+        ]
+
+        # 根据幻灯片数量调整超时时间
+        timeout = max(60, request.slide_count * 10)  # 每张幻灯片至少10秒，最少60秒
+
+        # 调用增强版AI接口
+        json_content = await _call_ai_with_retry(
+            client=client,
+            model_name=model_name,
+            messages=messages,
+            max_retries=3,
+            timeout=timeout
         )
 
-        json_content = response.choices[0].message.content.strip()
         logger.info(f"成功从{display_name}API获取结构化内容")
 
         # 解析JSON数据

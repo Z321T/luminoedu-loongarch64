@@ -75,7 +75,15 @@ export const generatePPTOutline = async (data: PPTGenerateRequest): Promise<PPTO
     console.log('开始生成PPT大纲:', data);
 
     // 发送API请求
-    const response = await api.post('/teacher/ppt/generate_outline', data);
+    const response = await api.post('/teacher/ppt/generate_outline', data, {
+        timeout: 300000, // 设置超时时间为5分钟
+    });
+
+    // 添加响应数据检查
+    if (!response.data || !response.data.outline_md) {
+      console.error('服务器返回数据格式异常:', response.data);
+      throw new Error('服务器返回数据格式异常');
+    }
 
     console.log('PPT大纲生成成功:', response.data);
     return response.data;
