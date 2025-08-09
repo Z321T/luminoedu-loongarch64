@@ -60,7 +60,7 @@
                 @change="onModelChange"
               >
                 <option v-for="model in availableModels" :key="model.id" :value="model.id">
-                  {{ model.name }}
+                  {{ model.description }}
                 </option>
               </select>
             </div>
@@ -147,16 +147,18 @@ const loadAvailableModels = async () => {
   try {
     const res = await getAvailableModels()
     availableModels.value = res.models
-    selectedModel.value = (res.default as AIModel) || AIModel.KIMI
+
+    // 直接使用后端返回的默认模型
+    selectedModel.value = res.default as AIModel
+
     console.log('可用模型:', availableModels.value)
+    console.log('默认模型:', res.default)
   } catch (error) {
     console.error('加载模型列表失败:', error)
-    // 设置默认模型
-    availableModels.value = [
-      { id: AIModel.KIMI, name: 'Kimi', description: 'kimi-k2-0711-preview' },
-      { id: AIModel.DEEPSEEK, name: 'DeepSeek', description: 'deepseek-chat' }
-    ]
-    selectedModel.value = AIModel.KIMI
+
+    // 如果加载失败，清空模型列表，不设置默认值
+    availableModels.value = []
+    alert('加载AI模型失败，请刷新页面重试')
   }
 }
 

@@ -50,7 +50,7 @@ export interface ChatHistoryDetail {
 // 获取可用模型列表
 export const getAvailableModels = async (): Promise<{ models: ModelInfo[], default: string }> => {
   try {
-    const response = await api.get('/chat/models')
+    const response = await api.get('/ai-model/models')
     return response.data
   } catch (error) {
     console.error('获取模型列表失败:', error)

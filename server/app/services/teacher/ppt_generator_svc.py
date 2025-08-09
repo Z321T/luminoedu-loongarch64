@@ -1,5 +1,4 @@
 import json
-import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
@@ -13,10 +12,12 @@ from pptx.util import Inches, Pt
 
 from app.config import SERVER_DIR
 from app.core.logger import setup_logger
-from app.core.api_client import MODEL_CONFIGS
+
+from app.core.ai_api.kimi.kimi_ppt import generate_ppt_json_with_kimi
+from app.core.ai_api.deepseek.deepseek_ppt import generate_ppt_json_with_deepseek
 from app.schemas.teacher.ppt_generator_sch import (
     PPTGenerationRequest, PPTGenerationResponse, PPTSlide,
-    PPTOutlineResponse, PPTGenerationFromOutlineRequest, AIModel
+    PPTOutlineResponse, PPTGenerationFromOutlineRequest
 )
 
 # 设置日志
@@ -29,68 +30,6 @@ PPT_OUTLINE_JSON_DIR = SERVER_DIR / "app" / "documents" / "ppt_outlines" / "json
 PPT_FILES_DIR.mkdir(exist_ok=True, parents=True)
 PPT_OUTLINE_MD_DIR.mkdir(exist_ok=True, parents=True)
 PPT_OUTLINE_JSON_DIR.mkdir(exist_ok=True, parents=True)
-
-
-
-def get_client_and_model(model: AIModel) -> tuple:
-    """
-    根据模型类型获取对应的客户端和模型名称
-    """
-    config = MODEL_CONFIGS.get(model)
-    if not config:
-        logger.warning(f"未知模型类型: {model}, 使用默认 KIMI")
-        config = MODEL_CONFIGS[AIModel.KIMI]
-
-    return config["client"], config["model_name"], config["display_name"]
-
-
-
-def _build_structured_ppt_prompt(request: PPTGenerationRequest) -> str:
-    """构建生成结构化PPT内容的提示词"""
-    return f"""你是一位经验丰富的教师和课件专家，请为以下教学内容设计一个详细且内容丰富的PPT结构化数据:
-
-标题: {request.title}
-学科: {request.subject}
-目标年级: {request.target_grade}
-教学目标: {request.teaching_target}
-教学重点: {', '.join(request.key_points)}
-幻灯片数量: {request.slide_count}
-{f"其他信息: {request.additional_info}" if request.additional_info else ""}
-
-请生成{request.slide_count}张幻灯片的结构化数据，每张幻灯片包含以下字段：
-- slide_number: 幻灯片序号（1开始）
-- slide_type: 幻灯片类型（"cover"=封面、"objective"=学习目标、"content"=内容讲解、"example"=示例代码、"exercise"=练习活动、"summary"=总结）
-- title: 幻灯片标题
-- main_content: 主要内容（知识点、概念、定义等）
-- bullet_points: 要点列表（数组格式）
-- code_example: 示例代码（如果有的话，使用具体可执行的代码）
-- exercise_content: 练习内容（如果是练习类型幻灯片）
-- key_takeaways: 关键要点（数组格式）
-- teacher_notes: 教师备注
-
-要求：
-1. 内容具体、丰富、实用，避免空洞的表述
-2. 对于编程相关内容，提供实际的代码片段
-3. 对于概念解释，给出明确的定义和具体例子
-4. 确保生成符合要求的幻灯片数量
-5. 每个字段都要有内容，如果某字段不适用则填入空字符串或空数组
-
-请以JSON数组格式返回，只返回JSON数据，不要有其他说明文字。
-
-示例格式：
-[
-  {{
-    "slide_number": 1,
-    "slide_type": "cover",
-    "title": "课程标题",
-    "main_content": "课程简介内容",
-    "bullet_points": ["要点1", "要点2"],
-    "code_example": "",
-    "exercise_content": "",
-    "key_takeaways": ["关键点1", "关键点2"],
-    "teacher_notes": "教师备注内容"
-  }}
-]"""
 
 
 
@@ -161,81 +100,6 @@ def _convert_json_to_markdown(slides_data: List[Dict[str, Any]]) -> str:
 
 
 
-async def _call_ai_with_retry(client, model_name: str, messages: List[Dict], max_retries: int = 3,
-                              timeout: int = 120) -> str:
-    """
-    带重试机制的AI API调用
-
-    Args:
-        client: AI客户端
-        model_name: 模型名称
-        messages: 消息列表
-        max_retries: 最大重试次数
-        timeout: 超时时间（秒）
-
-    Returns:
-        AI返回的内容
-
-    Raises:
-        Exception: 当所有重试都失败时
-    """
-    last_exception = None
-
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"正在调用AI接口... (尝试 {attempt + 1}/{max_retries})")
-
-            # 根据幻灯片数量动态调整token数量
-            slide_count = 10  # 默认值
-            for msg in messages:
-                if "幻灯片数量:" in msg.get("content", ""):
-                    try:
-                        # 从消息中提取幻灯片数量
-                        content = msg["content"]
-                        start = content.find("幻灯片数量:") + len("幻灯片数量:")
-                        end = content.find("\n", start)
-                        if end == -1:
-                            end = len(content)
-                        slide_count = int(content[start:end].strip())
-                    except:
-                        pass
-
-            # 动态计算max_tokens，每张幻灯片大约需要500-800 tokens
-            max_tokens = min(max(slide_count * 600, 4096), 16384)
-
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                temperature=0.6,
-                max_tokens=max_tokens,
-                stream=False,
-                timeout=timeout
-            )
-
-            content = response.choices[0].message.content.strip()
-            if content:
-                logger.info(f"AI接口调用成功 (尝试 {attempt + 1})")
-                return content
-            else:
-                raise Exception("AI返回空内容")
-
-        except Exception as e:
-            last_exception = e
-            logger.warning(f"第{attempt + 1}次AI调用失败: {str(e)}")
-
-            if attempt < max_retries - 1:
-                # 指数退避重试
-                wait_time = 2 ** attempt
-                logger.info(f"等待{wait_time}秒后重试...")
-                await asyncio.sleep(wait_time)
-            else:
-                logger.error(f"AI调用失败，已达到最大重试次数")
-
-    # 所有重试都失败
-    raise Exception(f"AI调用失败，已重试{max_retries}次。最后错误: {str(last_exception)}")
-
-
-
 async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> PPTOutlineResponse:
     """
     生成PPT的结构化JSON数据，然后转换为Markdown格式大纲
@@ -243,50 +107,30 @@ async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> 
     logger.info(f"开始生成PPT大纲: 标题={request.title}, 模型={request.model.value}")
 
     try:
-        # 获取对应模型的客户端和模型名称
-        client, model_name, display_name = get_client_and_model(request.model)
+        # 将AIModel枚举转换为字符串用于模型工厂
+        model_id = request.model.value.lower()  # 如 "KIMI" -> "kimi"
 
-        # 构建结构化PPT内容的提示词
-        structured_prompt = _build_structured_ppt_prompt(request)
+        if model_id == "kimi":
+            logger.info("检测到Kimi模型，使用专用生成器")
+            # 使用专用的Kimi生成器获取JSON数据
+            slides_data = await generate_ppt_json_with_kimi(request, staff_id)
+            model_display_name = "Kimi"
 
-        # 设置消息
-        messages = [
-            {"role": "system",
-             "content": "你是一个专业的教育资源制作助手，擅长生成教学PPT内容。请严格按照要求的JSON格式返回数据。"},
-            {"role": "user", "content": structured_prompt}
-        ]
+        elif model_id == "deepseek":
+            logger.info("检测到DeepSeek模型，使用专用生成器")
+            slides_data = await generate_ppt_json_with_deepseek(request, staff_id)
+            model_display_name = "DeepSeek"
 
-        # 根据幻灯片数量调整超时时间
-        timeout = max(60, request.slide_count * 10)  # 每张幻灯片至少10秒，最少60秒
+        else:
+            # 不支持的模型，抛出错误
+            supported_models = ["kimi", "deepseek"]
+            raise Exception(f"不支持的模型: {model_id}。当前支持的模型: {', '.join(supported_models)}")
 
-        # 调用增强版AI接口
-        json_content = await _call_ai_with_retry(
-            client=client,
-            model_name=model_name,
-            messages=messages,
-            max_retries=3,
-            timeout=timeout
-        )
-
-        logger.info(f"成功从{display_name}API获取结构化内容")
-
-        # 解析JSON数据
-        try:
-            # 移除可能的代码块标记
-            if json_content.startswith('```json'):
-                json_content = json_content[7:]
-            if json_content.endswith('```'):
-                json_content = json_content[:-3]
-
-            slides_data = json.loads(json_content)
-            logger.info(f"成功解析JSON数据，包含{len(slides_data)}张幻灯片")
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON解析失败: {str(e)}")
-            raise Exception(f"AI返回的数据格式错误: {str(e)}")
-
-        # 将JSON转换为Markdown格式
+        # 统一的后续处理逻辑
+        # 使用服务层的转换函数将JSON转换为Markdown
         md_content = _convert_json_to_markdown(slides_data)
-        # 保存JSON和Markdown文件
+
+        # 保存文件（使用现有的保存逻辑）
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # 保存JSON文件
@@ -304,7 +148,7 @@ async def generate_ppt_outline(request: PPTGenerationRequest, staff_id: str) -> 
         return PPTOutlineResponse(
             title=request.title,
             outline_md=md_content,
-            model=display_name
+            model=model_display_name
         )
 
     except Exception as e:

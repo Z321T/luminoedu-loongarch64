@@ -5,34 +5,13 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import auth_current_user
-from app.core.api_client import MODEL_CONFIGS
+from app.core.ai_api.model_factory import AIModelFactory
 from app.models.user_common import UserBase
 from app.schemas.chat_sch import ChatRequest, AIModel
 from app.services.chat_svc import process_chat_request, get_chat_history
 
 
 router = APIRouter(tags=["AI-Chat"])
-
-
-
-@router.get("/models")
-async def get_available_models(
-        user: UserBase = Depends(auth_current_user)
-):
-    """获取可用的AI模型列表"""
-    models = [
-        {
-            "id": model.value,
-            "name": config["display_name"],
-            "description": f"{config['model_name']}"
-        }
-        for model, config in MODEL_CONFIGS.items()
-    ]
-
-    return {
-        "models": models,
-        "default": "kimi"
-    }
 
 
 
@@ -46,8 +25,14 @@ async def stream_message(
     """
     # 强制设置为流式请求
     request.stream = True
-    # 验证模型是否有效
-    if request.model not in MODEL_CONFIGS:
+
+    available_models = AIModelFactory.get_available_models()
+    model_ids = list(available_models.keys())
+
+    # 将 AIModel 枚举转换为字符串进行比较
+    model_value = request.model.value if hasattr(request.model, 'value') else str(request.model)
+
+    if model_value not in model_ids:
         request.model = AIModel.KIMI  # 使用默认模型
 
     async def event_generator():

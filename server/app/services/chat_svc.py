@@ -6,7 +6,7 @@ from pathlib import Path
 
 from app.config import MEDIA_ROOT
 from app.core.logger import setup_logger
-from app.core.api_client import MODEL_CONFIGS
+from app.core.ai_api.model_factory import AIModelFactory
 from app.models.user_common import UserRole
 from app.schemas.chat_sch import (
     ChatMessage, ChatRequest, ChatStreamResponse, AIModel
@@ -24,18 +24,33 @@ CHAT_HISTORY_ROOT_DIR.mkdir(exist_ok=True, parents=True)
 chat_history_cache = {}
 
 
-
 def get_client_and_model(model: AIModel) -> tuple:
     """
-    根据模型类型获取对应的客户端和模型名称
+    根据模型类型获取对应的客户端和模型配置
     """
-    config = MODEL_CONFIGS.get(model)
-    if not config:
-        logger.warning(f"未知模型类型: {model}, 使用默认 KIMI")
-        config = MODEL_CONFIGS[AIModel.KIMI]
+    try:
+        # 将 AIModel 枚举转换为字符串
+        model_id = model.value if hasattr(model, 'value') else str(model)
 
-    return config["client"], config["model_name"]
+        # 检查模型是否可用
+        available_models = AIModelFactory.get_available_models()
+        if model_id not in available_models:
+            logger.warning(f"未知模型类型: {model}, 使用默认模型")
+            model_id = AIModelFactory.get_default_model()
 
+        # 创建客户端
+        client = AIModelFactory.create_client(model_id)
+        model_config = available_models[model_id]
+
+        return client, model_config["name"]
+
+    except Exception as e:
+        logger.error(f"获取模型客户端失败: {str(e)}")
+        # 回退到默认模型
+        default_model_id = AIModelFactory.get_default_model()
+        client = AIModelFactory.create_client(default_model_id)
+        available_models = AIModelFactory.get_available_models()
+        return client, available_models[default_model_id]["name"]
 
 
 def get_user_chat_directory(user_id: str, user_role: UserRole) -> Path:
@@ -66,7 +81,14 @@ def get_system_prompt(user_role: UserRole, model: AIModel) -> str:
     """
     根据用户角色和模型获取系统提示词
     """
-    model_name = MODEL_CONFIGS[model]["display_name"]
+    try:
+        # 获取模型显示名称
+        model_id = model.value if hasattr(model, 'value') else str(model)
+        available_models = AIModelFactory.get_available_models()
+        model_name = available_models.get(model_id, {}).get("name", "AI助手")
+    except:
+        model_name = "AI助手"
+
     base_prompt = "你是一个教育辅助AI助手，名为Lumino教学助手。"
     if user_role == UserRole.TEACHER:
         return base_prompt + "你将协助教师解答教学问题，提供教学建议和资源。"
@@ -486,8 +508,14 @@ async def process_chat_request(
     处理聊天请求并将历史保存到用户角色专属文件夹
     """
     folder_name = f"{user_role.value}_{user_id}"
-    model_name = MODEL_CONFIGS[request.model]["display_name"]
-    logger.info(f"处理聊天请求: 用户角色目录={folder_name}")
+
+    try:
+        # 获取模型显示名称
+        model_id = request.model.value if hasattr(request.model, 'value') else str(request.model)
+        available_models = AIModelFactory.get_available_models()
+        model_name = available_models.get(model_id, {}).get("name", "AI助手")
+    except:
+        model_name = "AI助手"
 
     # 记录用户角色专属目录信息
     user_dir = get_user_chat_directory(user_id, user_role)
@@ -550,44 +578,38 @@ async def process_chat_request(
 
         logger.info(f"发送到 {model_name} 的消息数量: {len(messages)}")
 
-        # 调用AI服务获取回答
-        response = client.chat.completions.create(
-            model=model_name_api,
-            messages=messages,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            stream=True
-        )
-
-        # 处理流式响应
+        # 调用AI服务获取回答 - 使用流式调用
         full_content = ""
         chunk_count = 0
 
-        for chunk in response:
-            if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
-                content_chunk = chunk.choices[0].delta.content
-                full_content += content_chunk
-                chunk_count += 1
+        async for content_chunk in client.call_with_retry_stream(
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens
+        ):
+            # 累积内容
+            full_content += content_chunk
+            chunk_count += 1
 
-                # 实时保存：每5个chunk或者内容长度达到100的倍数时保存一次到用户角色专属文件夹
-                should_save = (chunk_count % 5 == 0) or (len(full_content) % 100 < 20)
-                update_assistant_response_in_history(
-                    chat_id,
-                    user_id,
-                    user_role,
-                    full_content,
-                    force_save=should_save
-                )
+            # 实时保存：每5个chunk或者内容长度达到100的倍数时保存一次到用户角色专属文件夹
+            should_save = (chunk_count % 5 == 0) or (len(full_content) % 100 < 20)
+            update_assistant_response_in_history(
+                chat_id,
+                user_id,
+                user_role,
+                full_content,
+                force_save=should_save
+            )
 
-                # 返回当前累积的响应
-                yield ChatStreamResponse(
-                    chat_id=chat_id,
-                    content=full_content,
-                    model=request.model.value,
-                    is_complete=False
-                )
+            # 返回累积的完整响应（这是关键修改）
+            yield ChatStreamResponse(
+                chat_id=chat_id,
+                content=full_content,  # 返回完整累积内容，不是片段
+                model=request.model.value,
+                is_complete=False
+            )
 
-        # 最终完整响应 - 强制保存最终结果到用户角色专属文件夹
+            # 最终完整响应 - 强制保存最终结果到用户角色专属文件夹
         update_assistant_response_in_history(
             chat_id,
             user_id,
@@ -605,7 +627,8 @@ async def process_chat_request(
 
         # 记录完成信息
         chat_file_path = get_chat_file_path(user_id, user_role, chat_id)
-        logger.info(f"聊天请求处理完成: 角色目录={folder_name}, 聊天ID={chat_id}, 模型={model_name}，最终内容长度={len(full_content)}")
+        logger.info(
+            f"聊天请求处理完成: 角色目录={folder_name}, 聊天ID={chat_id}, 模型={model_name}，最终内容长度={len(full_content)}")
         logger.info(f"聊天记录已保存到: {chat_file_path}")
 
     except Exception as e:

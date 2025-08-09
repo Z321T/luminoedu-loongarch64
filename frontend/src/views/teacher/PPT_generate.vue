@@ -199,7 +199,7 @@
                       :key="model.id"
                       :value="model.id"
                     >
-                      {{ model.name }} - {{ model.description }}
+                      {{ model.description }}
                     </option>
                   </select>
                   <small class="form-hint">选择不同的模型可能会产生不同风格的大纲内容</small>
@@ -594,12 +594,8 @@ const loadAvailableModels = async () => {
     }
   } catch (error) {
     console.error('加载模型列表失败:', error);
-    // 如果加载失败，设置默认模型
-    availableModels.value = [
-      { id: 'deepseek', name: 'DeepSeek', description: 'deepseek-chat' },
-      { id: 'kimi', name: 'Kimi', description: 'kimi-k2-0711-preview' }
-    ];
-    formData.model = 'kimi';
+    availableModels.value = []
+    alert('加载AI模型失败，请刷新页面重试')
   }
 };
 

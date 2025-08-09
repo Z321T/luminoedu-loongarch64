@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from app.routers import auth_rt, user_rt, teacher, admin, student, chat_rt
+from app.routers import auth_rt, user_rt, teacher, admin, student, chat_rt, ai_model_rt
 from app.core.dependencies import auth_current_user, auth_teacher_user, auth_student_user, auth_admin_user
 
 
@@ -17,6 +17,13 @@ api_router.include_router(
 api_router.include_router(
     user_rt.router,
     prefix="/user",
+    dependencies=[Depends(auth_current_user)]
+)
+
+# AI模型管理路由
+api_router.include_router(
+    ai_model_rt.router,
+    prefix="/ai-model",
     dependencies=[Depends(auth_current_user)]
 )
 

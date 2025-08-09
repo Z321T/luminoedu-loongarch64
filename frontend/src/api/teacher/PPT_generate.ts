@@ -49,18 +49,11 @@ export interface PPTCompleteResponse {
 // 获取可用模型列表
 export const getAvailableModels = async (): Promise<{ models: ModelInfo[], default: string }> => {
   try {
-    const response = await api.get('/chat/models')
+    const response = await api.get('/ai-model/models')
     return response.data
   } catch (error) {
-    console.error('获取PPT生成模型列表失败:', error)
-    // 返回默认模型列表作为备选
-    return {
-      models: [
-        { id: 'deepseek', name: 'DeepSeek', description: 'deepseek-chat' },
-        { id: 'kimi', name: 'Kimi', description: 'kimi-k2-0711-preview' }
-      ],
-      default: 'kimi'
-    }
+    console.error('获取模型列表失败:', error)
+    throw error
   }
 }
 
@@ -124,7 +117,11 @@ export const generatePPTOutline = async (data: PPTGenerateRequest): Promise<PPTO
       }
     } else if (error.request) {
       // 请求发送但没有收到响应
-      errorMessage = '服务器无响应，请检查网络连接';
+      if (error.code === 'ECONNABORTED') {
+        errorMessage = `请求超时，Kimi模型响应较慢，请稍后重试或选择其他模型`;
+      } else {
+        errorMessage = '服务器无响应，请检查网络连接';
+      }
     }
 
     throw new Error(errorMessage);

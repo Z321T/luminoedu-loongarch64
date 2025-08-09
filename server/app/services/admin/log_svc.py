@@ -28,6 +28,8 @@ SERVICE_DESCRIPTIONS = {
     "exercise_generator_api": "习题生成服务相关API请求日志",
     "ppt_generator_service": "PPT生成服务日志",
     "ppt_generator_api": "PPT生成服务相关API请求日志",
+    "kimi_ppt_generator": "Kimi--PPT大纲生成服务日志",
+    "deepseek_ppt_generator": "DeepSeek--PPT大纲生成服务日志",
     "course_management_service": "课程管理服务日志",
     "course_material_service": "课程资料管理服务日志",
     "course_notification_service": "课程通知服务日志",
